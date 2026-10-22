@@ -195,11 +195,28 @@ func PrintReport(domain string, host *HostInfo, dnsInfo *DomainInfo) {
 	fmt.Printf("\033[1;36m├──────────────────────────────────────────────────────────────────────────────────┤\033[0m\n")
 
 	// Discovered Subdomains
-	if dnsInfo != nil && len(dnsInfo.Subdomains) > 0 {
-		fmt.Printf("\033[1;33m[+] Passive DNS Subdomains Discovered (%d):\033[0m\n", len(dnsInfo.Subdomains))
+	if dnsInfo != nil && (len(dnsInfo.Subdomains) > 0 || len(dnsInfo.Data) > 0) {
+		recordMap := make(map[string][]string)
+		for _, d := range dnsInfo.Data {
+			if d.Subdomain != "" && d.Value != "" {
+				full := fmt.Sprintf("%s.%s", d.Subdomain, dnsInfo.Domain)
+				recordMap[full] = append(recordMap[full], fmt.Sprintf("%s (%s)", d.Value, d.Type))
+			}
+		}
+
+		totalCount := len(dnsInfo.Subdomains)
+		if len(recordMap) > totalCount {
+			totalCount = len(recordMap)
+		}
+		fmt.Printf("\033[1;33m[+] Passive DNS Subdomains Discovered (%d):\033[0m\n", totalCount)
+
 		for _, sub := range dnsInfo.Subdomains {
 			fullSub := fmt.Sprintf("%s.%s", sub, dnsInfo.Domain)
-			fmt.Printf("    ├── \033[1;32m%-35s\033[0m\n", fullSub)
+			targetVal := ""
+			if vals, ok := recordMap[fullSub]; ok && len(vals) > 0 {
+				targetVal = fmt.Sprintf(" \033[90m-> %s\033[0m", strings.Join(vals, ", "))
+			}
+			fmt.Printf("    ├── \033[1;32m%-28s\033[0m%s\n", fullSub, targetVal)
 		}
 		fmt.Println()
 	}
@@ -209,7 +226,7 @@ func PrintReport(domain string, host *HostInfo, dnsInfo *DomainInfo) {
 		if len(host.Ports) > 0 {
 			fmt.Printf("\033[1;33m[+] Open Exposed Ports (%d):\033[0m\n", len(host.Ports))
 			for _, port := range host.Ports {
-				svcInfo := "Unknown"
+				svcInfo := ""
 				for _, d := range host.Data {
 					if d.Port == port {
 						if d.Product != "" {
@@ -220,6 +237,9 @@ func PrintReport(domain string, host *HostInfo, dnsInfo *DomainInfo) {
 						}
 						break
 					}
+				}
+				if svcInfo == "" {
+					svcInfo = getCommonServiceName(port)
 				}
 				fmt.Printf("    ├── Port \033[1;32m%-6d\033[0m [%s]\n", port, svcInfo)
 			}
@@ -238,4 +258,43 @@ func PrintReport(domain string, host *HostInfo, dnsInfo *DomainInfo) {
 		}
 	}
 	fmt.Printf("\033[1;36m└──────────────────────────────────────────────────────────────────────────────────┘\033[0m\n\n")
+}
+
+func getCommonServiceName(port int) string {
+	switch port {
+	case 21:
+		return "FTP"
+	case 22:
+		return "SSH"
+	case 25:
+		return "SMTP"
+	case 53:
+		return "DNS"
+	case 80:
+		return "HTTP"
+	case 110:
+		return "POP3"
+	case 143:
+		return "IMAP"
+	case 443:
+		return "HTTPS"
+	case 445:
+		return "Microsoft-DS / SMB"
+	case 1433:
+		return "MS-SQL"
+	case 3306:
+		return "MySQL"
+	case 3389:
+		return "RDP"
+	case 5432:
+		return "PostgreSQL"
+	case 6379:
+		return "Redis"
+	case 8080:
+		return "HTTP-Alt / Proxy"
+	case 8443:
+		return "HTTPS-Alt"
+	default:
+		return "TCP-Service"
+	}
 }
