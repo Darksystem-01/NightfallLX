@@ -129,6 +129,59 @@ func main() {
 	flag.BoolVar(&isVersion, "version", false, "Show program version")
 	flag.BoolVar(&isVersion, "V", false, "Alias for --version")
 
+	flag.Usage = func() {
+		fmt.Println(`
+  ███╗   ██╗██╗ ██████╗ ██╗  ██╗████████╗███████╗ █████╗ ██╗     ██╗     ██╗   ██╗
+  ████╗  ██║██║██╔════╝ ██║  ██║╚══██╔══╝██╔════╝██╔══██╗██║     ██║     ╚██╗ ██╔╝
+  ██╔██╗ ██║██║██║  ███╗███████║   ██║   █████╗  ███████║██║     ██║      ╚████╔╝ 
+  ██║╚██╗██║██║██║   ██║██╔══██║   ██║   ██╔══╝  ██╔══██║██║     ██║      ██╔═██╗ 
+  ██║ ╚████║██║╚██████╔╝██║  ██║   ██║   ██║     ██║  ██║███████╗███████╗██╔╝ ██╗
+  ╚═╝  ╚═══╝╚═╝ ╚═════╝ ╚═╝  ╚═╝   ╚═╝   ╚═╝     ╚═╝  ╚═╝╚══════╝╚══════╝╚═╝  ╚═╝
+  :: Next-Gen Web Assessment & Recon Suite :: [ Go Edition v2.0 ] ::
+
+USAGE:
+  nightfalllx -u <target-url> [options]
+  nightfalllx -tech -u <target-url>
+  nightfalllx -r <burp-request.txt> [options]
+  nightfalllx -u "http://target.lab/FUZZ" -w wordlist.txt
+  nightfalllx -i   (Launch Interactive Mouse-Controllable Dashboard)
+
+TARGET SPECIFICATION:
+  -u string        Target URL (e.g. http://10.129.x.x/index.php?id=1 or .../FUZZ)
+  -r string        Burp Suite raw HTTP request file (e.g. -r request.txt)
+  -domain string   Target domain for Subdomain & VHost discovery
+  -https, -ssl     Force HTTPS scheme
+
+ASSESSMENT & FINGERPRINTING:
+  -tech            Deep technology & exact version discovery (Wappalyzer-grade)
+  -m string        Modules to run: sqli, ssti, lfi, cmdi, xss, cors, redirect, ssrf, jwt, waf (default: "all")
+
+HIGH-SPEED FUZZING & VHOSTS (ffuf-style):
+  -w string        Wordlist path for directory, parameter, or VHost fuzzing
+  -t int           Concurrent Goroutines (default: 40)
+  -sub, -subdomain Enable Subdomain & Virtual Host discovery mode
+  -ac              Auto-calibrate baseline wildcard responses (default: true)
+  -mc, -fc string  Match / Filter HTTP status codes (e.g. -mc 200,302 -fc 404)
+  -ms, -fs string  Match / Filter response sizes in bytes
+  -mw, -fw string  Match / Filter response word counts
+  -ml, -fl string  Match / Filter response line counts
+
+INTERACTIVE & DIAGNOSTICS:
+  -i, -ui, -tui    Launch interactive mouse-controllable TUI dashboard
+  -doctor          Run connectivity, DNS, TLS, and proxy diagnostics
+  -version, -V     Show program version
+
+HTTP & PROXY CONFIGURATION:
+  -X string        HTTP Method: GET, POST, PUT, etc. (default: "GET")
+  -d string        POST request data body
+  -H value         Custom HTTP header (repeatable, e.g. -H "Authorization: Bearer ...")
+  -b string        Cookie string
+  -p string        Proxy URL (e.g. http://127.0.0.1:8080)
+  -k               Insecure / Ignore TLS verification (default: true)
+  -timeout int     Request timeout in seconds (default: 15)
+  -o string        Output report filename prefix (default: "lab_report")`)
+	}
+
 	flag.Parse()
 
 	if isVersion {
@@ -136,12 +189,18 @@ func main() {
 		return
 	}
 
-	// 0. Interactive Mouse-Controllable TUI Mode
-	if isInteractive || (len(os.Args) == 1 && rawURL == "" && rawReqFile == "") {
+	// 0. Interactive Mouse-Controllable TUI Mode (only on explicit -i / -ui / -tui flag)
+	if isInteractive {
 		dash := tui.NewInteractiveTUI(rawURL)
 		dash.Proxy = proxy
 		dash.Wordlist = wordlist
 		dash.RunLoop()
+		return
+	}
+
+	// If no arguments or target given, show standard usage
+	if len(os.Args) == 1 || (rawURL == "" && rawReqFile == "" && domain == "" && !isDoctor) {
+		flag.Usage()
 		return
 	}
 
