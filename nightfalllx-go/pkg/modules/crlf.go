@@ -38,9 +38,9 @@ func (m *CRLFModule) Run(target *Target, c *client.Client) ([]*Finding, error) {
 			var resp *client.Response
 			var err error
 			if isPost {
-				resp, err = c.Request("POST", target.URL, target.BuildDataWithParam(param, probe.Payload), nil)
+				resp, err = c.Request("POST", target.URL, target.BuildDataWithRawParam(param, probe.Payload), nil)
 			} else {
-				resp, err = c.Request("GET", target.BuildURLWithParam(param, probe.Payload), "", nil)
+				resp, err = c.Request("GET", target.BuildURLWithRawParam(param, probe.Payload), "", nil)
 			}
 
 			if err != nil || resp == nil {
@@ -53,11 +53,10 @@ func (m *CRLFModule) Run(target *Target, c *client.Client) ([]*Finding, error) {
 
 			if injectedVal == "nflx_crlf" || strings.Contains(cookieVal, "nflx_crlf=1") {
 				evidence := fmt.Sprintf("X-Injected-Header: %s | Set-Cookie: %s", injectedVal, cookieVal)
-				findings = append(findings, &Finding{
+				finding := &Finding{
 					Module:      m.Name(),
 					Title:       "CRLF / HTTP Header Injection (Response Splitting)",
 					Severity:    SeverityHigh,
-					Confidence:  100,
 					URL:         target.URL,
 					Parameter:   param,
 					Payload:     probe.Payload,
@@ -65,7 +64,9 @@ func (m *CRLFModule) Run(target *Target, c *client.Client) ([]*Finding, error) {
 					Evidence:    evidence,
 					Remediation: "Strip or reject CR (%0d, \\r) and LF (%0a, \\n) characters from all user input before including it in HTTP response headers.",
 					CWEID:       113,
-				})
+				}
+				finding.SetConfidence(ConfidenceConfirmed)
+				findings = append(findings, finding)
 				break
 			}
 		}
