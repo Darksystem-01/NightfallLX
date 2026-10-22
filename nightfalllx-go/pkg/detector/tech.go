@@ -6,6 +6,7 @@ import (
 	"nightfalllx/pkg/client"
 	"regexp"
 	"strings"
+	"time"
 )
 
 // Category classifies the type of technology.
@@ -104,9 +105,15 @@ func (d *TechDetector) Detect(targetURL string, c *client.Client) (*TechReport, 
 		resp, err := c.Request("GET", currentURL, "", nil)
 		if err != nil {
 			if hop == 0 {
-				return nil, fmt.Errorf("connection failed: %w", err)
+				// Auto-retry once on slow networks
+				time.Sleep(500 * time.Millisecond)
+				resp, err = c.Request("GET", currentURL, "", nil)
+				if err != nil {
+					return nil, fmt.Errorf("connection failed (server timeout or refused): %w", err)
+				}
+			} else {
+				break
 			}
-			break
 		}
 		allResponses = append(allResponses, resp)
 
@@ -275,6 +282,10 @@ func (d *TechDetector) Detect(targetURL string, c *client.Client) (*TechReport, 
 			addTech(CatFramework, "Django", "", 95, "Cookie: csrftoken / django")
 			addTech(CatLanguage, "Python", "", 95, "Django framework")
 			addTech(CatTemplateEngine, "Django Template / Jinja2", "", 90, "Default Django template engine")
+		}
+		if strings.Contains(cookieLower, "_csrf") && (strings.Contains(setCookie, "a:2:{i:0;") || strings.Contains(setCookie, "%3A2%3A%7Bi%3A0")) {
+			addTech(CatFramework, "Yii Framework (PHP)", "2.x", 100, "Cookie: _csrf (Yii2 CSRF token signature)")
+			addTech(CatLanguage, "PHP", "", 100, "Yii Framework implies PHP")
 		}
 		if strings.Contains(cookieLower, "connect.sid") {
 			addTech(CatFramework, "Express.js", "", 90, "Cookie: connect.sid")

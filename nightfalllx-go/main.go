@@ -99,7 +99,7 @@ func main() {
 	flag.StringVar(&cookie, "b", "", "Cookie header value")
 	flag.StringVar(&proxy, "p", "", "HTTP proxy URL (e.g. http://127.0.0.1:8080 for Burp Suite)")
 	flag.BoolVar(&insecure, "k", true, "Disable TLS certificate verification (default: true for labs)")
-	flag.IntVar(&timeoutSec, "timeout", 10, "Request timeout in seconds")
+	flag.IntVar(&timeoutSec, "timeout", 15, "Request timeout in seconds (default: 15)")
 
 	// Reporting
 	flag.StringVar(&output, "o", "lab_report", "Output report base name")
@@ -246,7 +246,11 @@ func main() {
 
 	// 6. Standalone Tech Detector Mode
 	if isTech {
-		httpClient := client.NewClient(proxy, time.Duration(timeoutSec)*time.Second, insecure, cookie, parsedHeaders)
+		techTimeout := time.Duration(timeoutSec) * time.Second
+		if techTimeout < 15*time.Second {
+			techTimeout = 15 * time.Second
+		}
+		httpClient := client.NewClient(proxy, techTimeout, insecure, cookie, parsedHeaders)
 		det := detector.NewTechDetector()
 		fmt.Printf("\n\033[1;36m[*] Fingerprinting Technologies & Exact Versions on:\033[0m %s ...\n", rawURL)
 		rep, err := det.Detect(rawURL, httpClient)
