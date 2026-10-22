@@ -13,10 +13,11 @@ type Category string
 
 const (
 	CatServer         Category = "Web Server"
+	CatCDN            Category = "CDN & Proxy"
 	CatLanguage       Category = "Programming Language"
 	CatFramework      Category = "Web Framework"
 	CatTemplateEngine Category = "Template Engine"
-	CatCMS            Category = "CMS"
+	CatCMS            Category = "CMS & Site Builder"
 	CatFrontend       Category = "Frontend Library"
 	CatOS             Category = "Operating System"
 	CatSecurity       Category = "Security & Headers"
@@ -34,6 +35,7 @@ type Technology struct {
 // TechReport contains the complete scan results.
 type TechReport struct {
 	URL          string        `json:"url"`
+	RedirectURL  string        `json:"redirect_url,omitempty"`
 	Technologies []*Technology `json:"technologies"`
 	Headers      []string      `json:"headers"`
 	MissingSec   []string      `json:"missing_security_headers"`
@@ -63,15 +65,10 @@ var (
 	reVueVersion       = regexp.MustCompile(`(?i)vue(?:\.js)?[/ _-]?v?([0-9]+\.[0-9]+(?:\.[0-9]+)?)`)
 	reReactVersion     = regexp.MustCompile(`(?i)react(?:\.js)?[/ _-]?v?([0-9]+\.[0-9]+(?:\.[0-9]+)?)`)
 	reNextVersion      = regexp.MustCompile(`(?i)next\.js[/ _-]?v?([0-9]+\.[0-9]+(?:\.[0-9]+)?)`)
-	reAspNetVersion    = regexp.MustCompile(`(?i)asp\.net(?: version:)?([0-9]+\.[0-9]+(?:\.[0-9]+)?)`)
+	reCoreJSVersion    = regexp.MustCompile(`(?i)core-js(?:-bundle)?[/ @-]?([0-9]+\.[0-9]+(?:\.[0-9]+)?)`)
 )
 
 func (d *TechDetector) Detect(targetURL string, c *client.Client) (*TechReport, error) {
-	resp, err := c.Request("GET", targetURL, "", nil)
-	if err != nil {
-		return nil, fmt.Errorf("connection failed: %w", err)
-	}
-
 	report := &TechReport{
 		URL: targetURL,
 	}
@@ -99,161 +96,234 @@ func (d *TechDetector) Detect(targetURL string, c *client.Client) (*TechReport, 
 		report.Technologies = append(report.Technologies, tech)
 	}
 
-	// 1. Analyze Response Headers
-	serverHeader := resp.Headers.Get("Server")
-	xPoweredBy := resp.Headers.Get("X-Powered-By")
-	setCookie := strings.Join(resp.Headers.Values("Set-Cookie"), " ; ")
+	// 1. Follow Redirects to inspect both initial hop and landing page
+	currentURL := targetURL
+	var allResponses []*client.Response
 
-	// --- Server & Operating System ---
-	if serverHeader != "" {
-		report.Headers = append(report.Headers, "Server: "+serverHeader)
+	for hop := 0; hop < 6; hop++ {
+		resp, err := c.Request("GET", currentURL, "", nil)
+		if err != nil {
+			if hop == 0 {
+				return nil, fmt.Errorf("connection failed: %w", err)
+			}
+			break
+		}
+		allResponses = append(allResponses, resp)
 
-		// Apache
-		if m := reApacheVersion.FindStringSubmatch(serverHeader); len(m) > 1 {
-			addTech(CatServer, "Apache HTTP Server", m[1], 100, "Server: "+serverHeader)
-		} else if strings.Contains(strings.ToLower(serverHeader), "apache") {
-			addTech(CatServer, "Apache HTTP Server", "", 95, "Server: "+serverHeader)
-		}
-
-		// Nginx
-		if m := reNginxVersion.FindStringSubmatch(serverHeader); len(m) > 1 {
-			addTech(CatServer, "Nginx", m[1], 100, "Server: "+serverHeader)
-		} else if strings.Contains(strings.ToLower(serverHeader), "nginx") {
-			addTech(CatServer, "Nginx", "", 95, "Server: "+serverHeader)
-		}
-
-		// Microsoft IIS
-		if m := reIISVersion.FindStringSubmatch(serverHeader); len(m) > 1 {
-			addTech(CatServer, "Microsoft IIS", m[1], 100, "Server: "+serverHeader)
-			addTech(CatOS, "Windows Server", "", 90, "IIS implies Windows")
-		} else if strings.Contains(strings.ToLower(serverHeader), "iis") {
-			addTech(CatServer, "Microsoft IIS", "", 95, "Server: "+serverHeader)
-			addTech(CatOS, "Windows Server", "", 85, "IIS implies Windows")
-		}
-
-		// LiteSpeed / OpenResty / Caddy / Cloudflare
-		if strings.Contains(strings.ToLower(serverHeader), "litespeed") {
-			addTech(CatServer, "LiteSpeed", "", 95, "Server: "+serverHeader)
-		}
-		if strings.Contains(strings.ToLower(serverHeader), "openresty") {
-			addTech(CatServer, "OpenResty", "", 95, "Server: "+serverHeader)
-		}
-		if strings.Contains(strings.ToLower(serverHeader), "caddy") {
-			addTech(CatServer, "Caddy", "", 95, "Server: "+serverHeader)
-		}
-		if strings.Contains(strings.ToLower(serverHeader), "cloudflare") {
-			addTech(CatServer, "Cloudflare Edge", "", 95, "Server: "+serverHeader)
-		}
-
-		// OpenSSL
-		if m := reOpenSSLVersion.FindStringSubmatch(serverHeader); len(m) > 1 {
-			addTech(CatSecurity, "OpenSSL", m[1], 100, "Server: "+serverHeader)
-		}
-
-		// OS Detection via Server header
-		serverLower := strings.ToLower(serverHeader)
-		if strings.Contains(serverLower, "ubuntu") {
-			addTech(CatOS, "Ubuntu Linux", "", 100, "Server: "+serverHeader)
-		} else if strings.Contains(serverLower, "debian") {
-			addTech(CatOS, "Debian Linux", "", 100, "Server: "+serverHeader)
-		} else if strings.Contains(serverLower, "centos") {
-			addTech(CatOS, "CentOS Linux", "", 100, "Server: "+serverHeader)
-		} else if strings.Contains(serverLower, "alpine") {
-			addTech(CatOS, "Alpine Linux", "", 100, "Server: "+serverHeader)
-		} else if strings.Contains(serverLower, "freebsd") {
-			addTech(CatOS, "FreeBSD", "", 100, "Server: "+serverHeader)
-		} else if strings.Contains(serverLower, "unix") || strings.Contains(serverLower, "linux") {
-			addTech(CatOS, "Linux / POSIX", "", 85, "Server: "+serverHeader)
-		}
-
-		// Python / Werkzeug / Gunicorn
-		if strings.Contains(serverLower, "werkzeug") {
-			addTech(CatServer, "Werkzeug WSGI", "", 95, "Server: "+serverHeader)
-			addTech(CatLanguage, "Python", "", 95, "Werkzeug runs Python")
-			addTech(CatFramework, "Flask", "", 75, "Commonly Flask backend")
-		}
-		if strings.Contains(serverLower, "gunicorn") {
-			addTech(CatServer, "Gunicorn", "", 95, "Server: "+serverHeader)
-			addTech(CatLanguage, "Python", "", 90, "Gunicorn WSGI")
-		}
-		if strings.Contains(serverLower, "kestrel") {
-			addTech(CatServer, "Kestrel", "", 95, "Server: "+serverHeader)
-			addTech(CatFramework, "ASP.NET Core", "", 95, "Kestrel server")
-			addTech(CatLanguage, "C# / .NET", "", 95, "Kestrel implies .NET")
+		// Check for redirect
+		if resp.StatusCode >= 300 && resp.StatusCode < 400 && resp.Location != "" {
+			loc := resp.Location
+			if !strings.HasPrefix(loc, "http://") && !strings.HasPrefix(loc, "https://") {
+				baseU, err := url.Parse(currentURL)
+				if err == nil {
+					relU, err := url.Parse(loc)
+					if err == nil {
+						loc = baseU.ResolveReference(relU).String()
+					}
+				}
+			}
+			currentURL = loc
+		} else {
+			break
 		}
 	}
 
-	// --- Languages & Frameworks via X-Powered-By ---
-	if xPoweredBy != "" {
-		report.Headers = append(report.Headers, "X-Powered-By: "+xPoweredBy)
+	if currentURL != targetURL {
+		report.RedirectURL = currentURL
+	}
 
-		// PHP exact version
-		if m := rePHPVersion.FindStringSubmatch(xPoweredBy); len(m) > 1 {
-			addTech(CatLanguage, "PHP", m[1], 100, "X-Powered-By: "+xPoweredBy)
-		} else if strings.Contains(strings.ToLower(xPoweredBy), "php") {
-			addTech(CatLanguage, "PHP", "", 95, "X-Powered-By: "+xPoweredBy)
+	if len(allResponses) == 0 {
+		return nil, fmt.Errorf("no response received from %s", targetURL)
+	}
+
+	// 2. Iterate through all responses in chain (Redirects + Final Page)
+	finalResp := allResponses[len(allResponses)-1]
+
+	for _, resp := range allResponses {
+		serverHeader := resp.Headers.Get("Server")
+		xPoweredBy := resp.Headers.Get("X-Powered-By")
+		setCookie := strings.Join(resp.Headers.Values("Set-Cookie"), " ; ")
+		viaHeader := resp.Headers.Get("Via")
+		serverTiming := resp.Headers.Get("Server-Timing")
+		linkHeader := resp.Headers.Get("Link")
+
+		if serverHeader != "" {
+			report.Headers = append(report.Headers, "Server: "+serverHeader)
 		}
 
-		// Express / Node.js
-		if strings.Contains(strings.ToLower(xPoweredBy), "express") {
-			addTech(CatFramework, "Express.js", "", 95, "X-Powered-By: "+xPoweredBy)
-			addTech(CatLanguage, "Node.js (JavaScript)", "", 95, "Express.js framework")
+		// --- Cloudflare ---
+		if strings.Contains(strings.ToLower(serverHeader), "cloudflare") || resp.Headers.Get("CF-Ray") != "" || resp.Headers.Get("cf-cache-status") != "" {
+			addTech(CatCDN, "Cloudflare", "", 100, "Header CF-Ray / Server: cloudflare")
 		}
 
-		// Next.js
-		if strings.Contains(strings.ToLower(xPoweredBy), "next.js") {
-			addTech(CatFramework, "Next.js (React)", "", 100, "X-Powered-By: "+xPoweredBy)
+		// --- Wix.com & Pepyaka ---
+		if strings.Contains(strings.ToLower(serverHeader), "pepyaka") {
+			addTech(CatServer, "Pepyaka (Wix Server)", "", 100, "Server: Pepyaka")
+			addTech(CatCMS, "Wix.com Website Builder", "", 100, "Pepyaka implies Wix infrastructure")
+		}
+		if resp.Headers.Get("X-Wix-Request-Id") != "" || resp.Headers.Get("X-Wix-Cache-Control") != "" || resp.Headers.Get("X-Meta-Site-Id") != "" {
+			addTech(CatCMS, "Wix.com Website Builder", "", 100, "Header X-Wix-Request-Id / X-Meta-Site-Id")
 		}
 
-		// ASP.NET
-		if strings.Contains(strings.ToLower(xPoweredBy), "asp.net") {
-			addTech(CatFramework, "ASP.NET", "", 95, "X-Powered-By: "+xPoweredBy)
-			addTech(CatLanguage, "C# / .NET", "", 95, "ASP.NET framework")
+		// --- Varnish Cache ---
+		if strings.Contains(strings.ToLower(viaHeader), "varnish") || strings.Contains(strings.ToLower(serverTiming), "varnish") || strings.Contains(strings.ToLower(resp.Headers.Get("X-Cache")), "varnish") {
+			addTech(CatCDN, "Varnish Cache", "", 95, "Header Via / Server-Timing: varnish")
+		}
+
+		// --- Fastly ---
+		if resp.Headers.Get("X-Served-By") != "" && strings.Contains(resp.Headers.Get("X-Served-By"), "cache-") {
+			addTech(CatCDN, "Fastly", "", 95, "Header X-Served-By: cache-")
+		}
+
+		// --- AWS CloudFront ---
+		if resp.Headers.Get("X-Amz-Cf-Id") != "" || strings.Contains(strings.ToLower(viaHeader), "cloudfront") {
+			addTech(CatCDN, "AWS CloudFront", "", 100, "Header X-Amz-Cf-Id / CloudFront")
+		}
+
+		// --- Akamai ---
+		if resp.Headers.Get("X-Akamai-Transformed") != "" {
+			addTech(CatCDN, "Akamai Edge", "", 100, "Header X-Akamai-Transformed")
+		}
+
+		// --- Web Servers & Operating Systems ---
+		if serverHeader != "" {
+			if m := reApacheVersion.FindStringSubmatch(serverHeader); len(m) > 1 {
+				addTech(CatServer, "Apache HTTP Server", m[1], 100, "Server: "+serverHeader)
+			} else if strings.Contains(strings.ToLower(serverHeader), "apache") {
+				addTech(CatServer, "Apache HTTP Server", "", 95, "Server: "+serverHeader)
+			}
+
+			if m := reNginxVersion.FindStringSubmatch(serverHeader); len(m) > 1 {
+				addTech(CatServer, "Nginx", m[1], 100, "Server: "+serverHeader)
+			} else if strings.Contains(strings.ToLower(serverHeader), "nginx") {
+				addTech(CatServer, "Nginx", "", 95, "Server: "+serverHeader)
+			}
+
+			if m := reIISVersion.FindStringSubmatch(serverHeader); len(m) > 1 {
+				addTech(CatServer, "Microsoft IIS", m[1], 100, "Server: "+serverHeader)
+				addTech(CatOS, "Windows Server", "", 90, "IIS implies Windows")
+			} else if strings.Contains(strings.ToLower(serverHeader), "iis") {
+				addTech(CatServer, "Microsoft IIS", "", 95, "Server: "+serverHeader)
+				addTech(CatOS, "Windows Server", "", 85, "IIS implies Windows")
+			}
+
+			if strings.Contains(strings.ToLower(serverHeader), "litespeed") {
+				addTech(CatServer, "LiteSpeed", "", 95, "Server: "+serverHeader)
+			}
+			if strings.Contains(strings.ToLower(serverHeader), "openresty") {
+				addTech(CatServer, "OpenResty", "", 95, "Server: "+serverHeader)
+			}
+			if strings.Contains(strings.ToLower(serverHeader), "caddy") {
+				addTech(CatServer, "Caddy", "", 95, "Server: "+serverHeader)
+			}
+			if m := reOpenSSLVersion.FindStringSubmatch(serverHeader); len(m) > 1 {
+				addTech(CatSecurity, "OpenSSL", m[1], 100, "Server: "+serverHeader)
+			}
+
+			serverLower := strings.ToLower(serverHeader)
+			if strings.Contains(serverLower, "ubuntu") {
+				addTech(CatOS, "Ubuntu Linux", "", 100, "Server: "+serverHeader)
+			} else if strings.Contains(serverLower, "debian") {
+				addTech(CatOS, "Debian Linux", "", 100, "Server: "+serverHeader)
+			} else if strings.Contains(serverLower, "centos") {
+				addTech(CatOS, "CentOS Linux", "", 100, "Server: "+serverHeader)
+			} else if strings.Contains(serverLower, "alpine") {
+				addTech(CatOS, "Alpine Linux", "", 100, "Server: "+serverHeader)
+			} else if strings.Contains(serverLower, "freebsd") {
+				addTech(CatOS, "FreeBSD", "", 100, "Server: "+serverHeader)
+			} else if strings.Contains(serverLower, "unix") || strings.Contains(serverLower, "linux") {
+				addTech(CatOS, "Linux / POSIX", "", 85, "Server: "+serverHeader)
+			}
+		}
+
+		// --- Languages & Frameworks via X-Powered-By ---
+		if xPoweredBy != "" {
+			report.Headers = append(report.Headers, "X-Powered-By: "+xPoweredBy)
+			if m := rePHPVersion.FindStringSubmatch(xPoweredBy); len(m) > 1 {
+				addTech(CatLanguage, "PHP", m[1], 100, "X-Powered-By: "+xPoweredBy)
+			} else if strings.Contains(strings.ToLower(xPoweredBy), "php") {
+				addTech(CatLanguage, "PHP", "", 95, "X-Powered-By: "+xPoweredBy)
+			}
+			if strings.Contains(strings.ToLower(xPoweredBy), "express") {
+				addTech(CatFramework, "Express.js", "", 95, "X-Powered-By: "+xPoweredBy)
+				addTech(CatLanguage, "Node.js (JavaScript)", "", 95, "Express.js framework")
+			}
+			if strings.Contains(strings.ToLower(xPoweredBy), "next.js") {
+				addTech(CatFramework, "Next.js (React)", "", 100, "X-Powered-By: "+xPoweredBy)
+			}
+			if strings.Contains(strings.ToLower(xPoweredBy), "asp.net") {
+				addTech(CatFramework, "ASP.NET", "", 95, "X-Powered-By: "+xPoweredBy)
+				addTech(CatLanguage, "C# / .NET", "", 95, "ASP.NET framework")
+			}
+		}
+
+		// --- Cookie Analysis ---
+		cookieLower := strings.ToLower(setCookie)
+		if strings.Contains(cookieLower, "phpsessid") {
+			addTech(CatLanguage, "PHP", "", 95, "Cookie: PHPSESSID")
+		}
+		if strings.Contains(cookieLower, "laravel_session") {
+			addTech(CatFramework, "Laravel", "", 100, "Cookie: laravel_session")
+			addTech(CatLanguage, "PHP", "", 100, "Laravel framework")
+			addTech(CatTemplateEngine, "Blade", "", 90, "Default Laravel template engine")
+		}
+		if strings.Contains(cookieLower, "symfony") {
+			addTech(CatFramework, "Symfony", "", 95, "Cookie: symfony")
+			addTech(CatTemplateEngine, "Twig", "", 90, "Default Symfony template engine")
+		}
+		if strings.Contains(cookieLower, "csrftoken") || strings.Contains(cookieLower, "django") {
+			addTech(CatFramework, "Django", "", 95, "Cookie: csrftoken / django")
+			addTech(CatLanguage, "Python", "", 95, "Django framework")
+			addTech(CatTemplateEngine, "Django Template / Jinja2", "", 90, "Default Django template engine")
+		}
+		if strings.Contains(cookieLower, "connect.sid") {
+			addTech(CatFramework, "Express.js", "", 90, "Cookie: connect.sid")
+			addTech(CatLanguage, "Node.js (JavaScript)", "", 90, "Express session")
+		}
+		if strings.Contains(cookieLower, "jsessionid") {
+			addTech(CatLanguage, "Java", "", 95, "Cookie: JSESSIONID")
+			addTech(CatFramework, "Java Servlet / Spring", "", 85, "JSESSIONID standard")
+		}
+		if strings.Contains(cookieLower, "asp.net_sessionid") || strings.Contains(cookieLower, "aspsessionid") {
+			addTech(CatFramework, "ASP.NET", "", 95, "Cookie: ASPSESSIONID")
+			addTech(CatLanguage, "C# / .NET", "", 95, "ASP.NET session")
+		}
+		if strings.Contains(cookieLower, "_rails_session") || strings.Contains(cookieLower, "rack.session") {
+			addTech(CatFramework, "Ruby on Rails", "", 95, "Cookie: rails_session")
+			addTech(CatLanguage, "Ruby", "", 95, "Rails framework")
+			addTech(CatTemplateEngine, "ERB (Embedded Ruby)", "", 90, "Default Rails template engine")
+		}
+
+		// --- Link Header CDN analysis ---
+		if strings.Contains(linkHeader, "parastorage.com") || strings.Contains(linkHeader, "wixstatic.com") {
+			addTech(CatCMS, "Wix.com Website Builder", "", 100, "Link header / Wix CDN")
+			addTech(CatCDN, "Wix Static CDN (Parastorage)", "", 100, "Link preconnect: parastorage.com")
 		}
 	}
 
-	// --- Cookie Analysis ---
-	cookieLower := strings.ToLower(setCookie)
-	if strings.Contains(cookieLower, "phpsessid") {
-		addTech(CatLanguage, "PHP", "", 95, "Cookie: PHPSESSID")
-	}
-	if strings.Contains(cookieLower, "laravel_session") {
-		addTech(CatFramework, "Laravel", "", 100, "Cookie: laravel_session")
-		addTech(CatLanguage, "PHP", "", 100, "Laravel framework")
-		addTech(CatTemplateEngine, "Blade", "", 90, "Default Laravel template engine")
-	}
-	if strings.Contains(cookieLower, "symfony") {
-		addTech(CatFramework, "Symfony", "", 95, "Cookie: symfony")
-		addTech(CatTemplateEngine, "Twig", "", 90, "Default Symfony template engine")
-	}
-	if strings.Contains(cookieLower, "csrftoken") || strings.Contains(cookieLower, "django") {
-		addTech(CatFramework, "Django", "", 95, "Cookie: csrftoken / django")
-		addTech(CatLanguage, "Python", "", 95, "Django framework")
-		addTech(CatTemplateEngine, "Django Template / Jinja2", "", 90, "Default Django template engine")
-	}
-	if strings.Contains(cookieLower, "connect.sid") {
-		addTech(CatFramework, "Express.js", "", 90, "Cookie: connect.sid")
-		addTech(CatLanguage, "Node.js (JavaScript)", "", 90, "Express session")
-	}
-	if strings.Contains(cookieLower, "jsessionid") {
-		addTech(CatLanguage, "Java", "", 95, "Cookie: JSESSIONID")
-		addTech(CatFramework, "Java Servlet / Spring", "", 85, "JSESSIONID standard")
-	}
-	if strings.Contains(cookieLower, "asp.net_sessionid") || strings.Contains(cookieLower, "aspsessionid") {
-		addTech(CatFramework, "ASP.NET", "", 95, "Cookie: ASPSESSIONID")
-		addTech(CatLanguage, "C# / .NET", "", 95, "ASP.NET session")
-	}
-	if strings.Contains(cookieLower, "_rails_session") || strings.Contains(cookieLower, "rack.session") {
-		addTech(CatFramework, "Ruby on Rails", "", 95, "Cookie: rails_session")
-		addTech(CatLanguage, "Ruby", "", 95, "Rails framework")
-		addTech(CatTemplateEngine, "ERB (Embedded Ruby)", "", 90, "Default Rails template engine")
-	}
-
-	// 2. Analyze HTML Body & Meta Tags & Scripts
-	body := resp.Body
+	// 3. Inspect Landing Page HTML Body
+	body := finalResp.Body
 	bodyLower := strings.ToLower(body)
 
-	// --- CMS Detection ---
+	// --- Wix.com Site Builder ---
+	if strings.Contains(bodyLower, "wix.com website builder") || strings.Contains(bodyLower, "wixdesktopviewport") ||
+		strings.Contains(bodyLower, "static.wixstatic.com") || strings.Contains(bodyLower, "static.parastorage.com") {
+		addTech(CatCMS, "Wix.com Website Builder", "", 100, "Meta generator / Wix static assets")
+		addTech(CatCDN, "Wix Static CDN (Parastorage)", "", 100, "Asset origin: parastorage.com")
+	}
+
+	// --- Shopify ---
+	if strings.Contains(bodyLower, "cdn.shopify.com") || strings.Contains(bodyLower, "shopify.theme") {
+		addTech(CatCMS, "Shopify", "", 100, "Asset origin: cdn.shopify.com")
+		addTech(CatTemplateEngine, "Liquid", "", 90, "Default Shopify template engine")
+	}
+
+	// --- Webflow ---
+	if strings.Contains(bodyLower, "content=\"webflow\"") || strings.Contains(bodyLower, "webflow.js") {
+		addTech(CatCMS, "Webflow", "", 100, "Meta generator: Webflow")
+	}
+
+	// --- WordPress ---
 	if strings.Contains(bodyLower, "wp-content") || strings.Contains(bodyLower, "wp-includes") {
 		ver := ""
 		if m := reWordPressVersion.FindStringSubmatch(body); len(m) > 1 {
@@ -262,6 +332,8 @@ func (d *TechDetector) Detect(targetURL string, c *client.Client) (*TechReport, 
 		addTech(CatCMS, "WordPress", ver, 100, "HTML artifact: wp-content")
 		addTech(CatLanguage, "PHP", "", 100, "WordPress is built on PHP")
 	}
+
+	// --- Drupal & Joomla ---
 	if strings.Contains(bodyLower, "drupal") || strings.Contains(bodyLower, "/sites/default/files") {
 		ver := ""
 		if m := reDrupalVersion.FindStringSubmatch(body); len(m) > 1 {
@@ -279,7 +351,13 @@ func (d *TechDetector) Detect(targetURL string, c *client.Client) (*TechReport, 
 		addTech(CatLanguage, "PHP", "", 95, "Joomla is built on PHP")
 	}
 
-	// --- Frontend Libraries & Frameworks ---
+	// --- Frontend Libraries & JavaScript Bundles ---
+	if m := reCoreJSVersion.FindStringSubmatch(body); len(m) > 1 {
+		addTech(CatFrontend, "Core-js", m[1], 100, "Script core-js-bundle@"+m[1])
+	}
+	if strings.Contains(bodyLower, "@formatjs/intl-segmenter") {
+		addTech(CatFrontend, "FormatJS Polyfill", "", 95, "Polyfill script: @formatjs")
+	}
 	if strings.Contains(bodyLower, "react") || strings.Contains(bodyLower, "_reactroot") || strings.Contains(bodyLower, "data-reactid") {
 		ver := ""
 		if m := reReactVersion.FindStringSubmatch(body); len(m) > 1 {
@@ -322,14 +400,8 @@ func (d *TechDetector) Detect(targetURL string, c *client.Client) (*TechReport, 
 	if strings.Contains(bodyLower, "tailwind") {
 		addTech(CatFrontend, "Tailwind CSS", "", 85, "Tailwind CSS classes / stylesheet")
 	}
-	if strings.Contains(bodyLower, "alpine.js") || strings.Contains(bodyLower, "x-data=") {
-		addTech(CatFrontend, "Alpine.js", "", 95, "Alpine.js x-data attribute")
-	}
-	if strings.Contains(bodyLower, "htmx.org") || strings.Contains(bodyLower, "hx-get=") {
-		addTech(CatFrontend, "HTMX", "", 95, "HTMX hx- attribute")
-	}
 
-	// --- Template Engine Fingerprinting from Comments, Errors, and Framework Context ---
+	// --- Template Engines ---
 	if strings.Contains(bodyLower, "twig") || strings.Contains(bodyLower, "twig_error") {
 		addTech(CatTemplateEngine, "Twig", "", 95, "Twig error / signature in body")
 	}
@@ -342,14 +414,10 @@ func (d *TechDetector) Detect(targetURL string, c *client.Client) (*TechReport, 
 	if strings.Contains(bodyLower, "thymeleaf") {
 		addTech(CatTemplateEngine, "Thymeleaf", "", 95, "Thymeleaf signature in body")
 	}
-	if strings.Contains(bodyLower, "freemarker") || strings.Contains(bodyLower, "freemarker.template") {
-		addTech(CatTemplateEngine, "Apache FreeMarker", "", 95, "FreeMarker signature in body")
-	}
 
-	// 3. Active Probing for Exact PHP Version via Easter Egg query if not already found
+	// 4. Active Probing for Exact PHP Version via Easter Egg query if not already found
 	phpTechKey := string(CatLanguage) + ":php"
 	if foundMap[phpTechKey] == nil || foundMap[phpTechKey].Version == "" {
-		// Probe PHP Easter Egg credits
 		u, err := url.Parse(targetURL)
 		if err == nil {
 			eggURL := fmt.Sprintf("%s://%s/?=PHPB8B5F2A0-3C92-11d3-A360-006008902CFF", u.Scheme, u.Host)
@@ -362,9 +430,9 @@ func (d *TechDetector) Detect(targetURL string, c *client.Client) (*TechReport, 
 		}
 	}
 
-	// 4. Audit Security Headers
+	// 5. Audit Security Headers on landing page
 	checkSecHeader := func(headerName, desc string) {
-		if resp.Headers.Get(headerName) == "" {
+		if finalResp.Headers.Get(headerName) == "" {
 			report.MissingSec = append(report.MissingSec, fmt.Sprintf("%s (%s)", headerName, desc))
 		}
 	}
@@ -382,6 +450,9 @@ func PrintReport(r *TechReport) {
 	fmt.Println("\n\033[1;36m┌──────────────────────────────────────────────────────────────────────────────────┐\033[0m")
 	fmt.Printf("\033[1;36m│\033[0m \033[1;37m🎯 NightfallLX Deep Technology & Version Discovery Engine\033[0m                        \033[1;36m│\033[0m\n")
 	fmt.Printf("\033[1;36m│\033[0m Target: \033[1;33m%-73s\033[0m \033[1;36m│\033[0m\n", r.URL)
+	if r.RedirectURL != "" {
+		fmt.Printf("\033[1;36m│\033[0m Followed Redirect -> \033[1;32m%-60s\033[0m \033[1;36m│\033[0m\n", r.RedirectURL)
+	}
 	fmt.Println("\033[1;36m├──────────────────────────┬─────────────────────────────┬──────────┬──────────────┤\033[0m")
 	fmt.Println("\033[1;36m│\033[0m \033[1mCategory\033[0m                 \033[1;36m│\033[0m \033[1mTechnology Name\033[0m             \033[1;36m│\033[0m \033[1mVersion\033[0m  \033[1;36m│\033[0m \033[1mConfidence\033[0m   \033[1;36m│\033[0m")
 	fmt.Println("\033[1;36m├──────────────────────────┼─────────────────────────────┼──────────┼──────────────┤\033[0m")
