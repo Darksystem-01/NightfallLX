@@ -35,3 +35,7 @@ p0*
 ports.txt
 scan_plan.md
 lab_server.py
+nightfalllx
+nightfalllx.exe
+*.fuzz.json
+lab_report.*

@@ -53,6 +53,18 @@ class ModuleHandler(BaseHTTPRequestHandler):
             body = value
         elif path == "/lfi":
             body = base64.b64encode(b"<?php echo 'vapf'; ?>").decode("ascii")
+        elif path == "/ssti":
+            if "{{7*7}}" in value:
+                body = "result=49"
+            elif "{{7*8}}" in value:
+                body = "result=56"
+            else:
+                body = "normal"
+        elif path == "/lfi-trav":
+            if "etc/passwd" in value:
+                body = "root:x:0:0:root:/root:/bin/bash\ndaemon:x:1:1:daemon:/usr/sbin:/usr/sbin/nologin"
+            else:
+                body = "file not found"
         elif path == "/rce":
             if "; id" in value:
                 body = "uid=1000(vapf) gid=1000(vapf)"
@@ -135,6 +147,24 @@ def test_lfi_module_returns_verified_finding(client, server_url: str) -> None:
     assert len(findings) == 1
     assert findings[0].confidence == 100
     assert findings[0].cwe_id == 98
+
+
+def test_lfi_module_detects_path_traversal(client, server_url: str) -> None:
+    target = TargetSpec(server_url + "/lfi-trav", params={"q": "test.txt"}, authorized=True)
+    findings = LFIModule(client).run(target)
+    assert len(findings) == 1
+    assert findings[0].confidence >= 70
+    assert "path traversal" in findings[0].detail.lower()
+
+
+def test_ssti_module_returns_verified_finding(client, server_url: str) -> None:
+    from nightfalllx.modules.ssti import SSTIModule
+
+    target = TargetSpec(server_url + "/ssti", params={"q": "1"}, authorized=True)
+    findings = SSTIModule(client).run(target)
+    assert len(findings) == 1
+    assert findings[0].confidence == 100
+    assert findings[0].cwe_id == 1336
 
 
 def test_rce_module_confirms_harmless_output(client, server_url: str) -> None:

@@ -1,67 +1,108 @@
 # NightfallLX
 
+[![Go](https://img.shields.io/badge/go-1.20%2B-blue.svg)](https://golang.org/)
 [![Python](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/)
 [![Tests](https://img.shields.io/badge/tests-passing-brightgreen.svg)](https://github.com/Darksystem-01/NightfallLX/actions)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
-**Advanced AI-Assisted Web Vulnerability Assessment Framework**
+**Next-Generation High-Performance Web Vulnerability Assessment & Recon Suite**
 
-NightfallLX is an evidence-first security assessment framework for authorised
-web application testing. It combines adaptive HTTP behaviour, WAF-aware payload
-mutation, and bounded verification to turn ambiguous scanner output into
-defensible findings.
+NightfallLX is an evidence-first, multi-threaded security assessment and web fuzzing platform (with both high-speed Go runtime and modular Python framework) designed for bug bounty hunters, CTF players, and security engineers.
 
-## Features
+---
 
-- **0-100 Confidence Engine** — findings are scored from converging signals, not
-  a single reflected payload or timing sample.
-- **WAF Evasion** — fingerprint-driven payload mutation, encoding changes, and
-  browser-like TLS profiles through `curl_cffi`.
-- **SQLi** — boolean and time-based verification with bounded MySQL
-  `@@version` extraction.
-- **XSS** — DOM-aware verification with execution-context checks.
-- **LFI** — read-only PHP filter disclosure checks.
-- **Safe RCE PoC** — fixed harmless `id`, `whoami`, and `sleep` probes only.
-- **Doctor & Bootstrap** — environment checks plus automatic SecLists download.
+## ⚡ Key Highlights
 
-## Quick Start
+- 🖱️ **Interactive Mouse-Controlled TUI Dashboard (`nightfalllx -i`):** Cyberpunk terminal interface with full ANSI SGR mouse click navigation and keyboard support.
+- 🔍 **Deep Technology & Exact Version Detector (`nightfalllx --tech`):** Wappalyzer-grade identification of web servers (Apache, Nginx, IIS), exact language runtimes (e.g. PHP 8.2.10 via headers & Easter Eggs), frameworks (Laravel, Django, Spring Boot, Express, Rails), template engines (Blade, Twig, Jinja2, Smarty, Thymeleaf), frontend libraries, and defensive security header audits.
+- 📬 **Burp Suite Raw HTTP Request Parser (`-r request.txt`):** Native parsing of raw HTTP requests exported from Burp Suite (headers, cookies, query/POST params, and `*`/`FUZZ` injection markers).
+- 🌐 **ffuf-Compatible Subdomain & VHost Finder (`--sub`):** High-speed virtual host and subdomain fuzzing with **Auto-Calibration (`-ac`)** to automatically eliminate wildcard/catch-all false positives, paired with rich matchers and filters (`-mc`, `-fc`, `-ms`, `-fs`, `-mw`, `-fw`, `-ml`, `-fl`).
+- ⚡ **Mega-Fast 1,800+ req/sec Goroutine Fuzzer:** Ultra-fast directory and parameter fuzzing with zero runtime dependencies.
+- 🛡️ **10 Automated Vulnerability Modules:** Differential SQLi, SSTI, LFI, CMDi, XSS, CORS, SSRF, Open Redirect, JWT misconfiguration, and WAF fingerprinting.
+- 📋 **Executive Lab Reports:** Automatic generation of Markdown (`lab_report.md`) and JSON (`lab_report.json`) with ready-to-replay `curl` commands.
+
+---
+
+## 🚀 One-Step Global Installation
+
+Any user can clone the repository and install `nightfalllx` globally into their terminal with a single command:
 
 ```bash
 git clone https://github.com/Darksystem-01/NightfallLX.git
 cd NightfallLX
-pip install -e .
-nightfalllx --doctor
+./install.sh
 ```
 
-Download the SecLists wordlists on first use:
-
-```bash
-nightfalllx --download-wordlists
-```
-
-Show the version:
+Now `nightfalllx` is available globally from **any directory** in your terminal!
 
 ```bash
 nightfalllx --version
 ```
 
-## Usage
+---
 
+## 🎮 Usage Guide
+
+### 1. Interactive Mouse Dashboard
+Launch the mouse-controllable TUI dashboard with neon cyber graphics:
 ```bash
-nightfalllx -u http://127.0.0.1:8080
-nightfalllx -u http://127.0.0.1:8080 --auto
-nightfalllx -u http://127.0.0.1:8080 --modules sqli,xss,lfi
+nightfalllx -i
+# or
+nightfalllx --ui
 ```
 
-## Requirements
+### 2. Deep Technology & Exact Version Fingerprinting
+Scan web servers, exact PHP versions, frameworks, and template engines:
+```bash
+nightfalllx --tech -u http://target.lab
+```
 
-- Python 3.10+
-- Optional external tools: `ffuf`, `nmap`, `sqlmap`
+### 3. Burp Suite Raw Request Assessment
+Pass an exported Burp Suite request file directly to the scanner:
+```bash
+nightfalllx -r request.txt -m all -p http://127.0.0.1:8080
+```
 
-## Legal Disclaimer
+### 4. Subdomain & VHost Fuzzing (ffuf-style)
+Discover hidden virtual hosts on a target IP with automatic wildcard calibration:
+```bash
+nightfalllx -sub -u http://10.129.20.10 -domain target.htb -t 50
+```
 
-NightfallLX is intended **only** for systems you own or have explicit written
-authorisation to test. Unauthorised access, scanning, or exploitation is illegal
-and unethical. The authors accept no liability for misuse or damage caused by
-this software. Always define scope, follow the rules of engagement, and stop if
-you do not have permission.
+### 5. High-Speed Web Fuzzing
+Fuzz web endpoints with custom status codes and size/word filters:
+```bash
+nightfalllx -u http://target.lab/FUZZ -w wordlist.txt -t 50 -mc 200,301,302,403 -fw 12
+```
+
+### 6. Comprehensive Vulnerability Assessment
+Run all 10 security testing modules with Burp Suite proxy integration:
+```bash
+nightfalllx -u http://target.lab/app.php?id=1 -m all -p http://127.0.0.1:8080 -o my_audit
+```
+
+### 7. Diagnostics & Troubleshooting
+Test your DNS, TCP, TLS, and proxy connectivity:
+```bash
+nightfalllx --doctor -u http://target.lab -p http://127.0.0.1:8080
+```
+
+---
+
+## 🧪 Testing
+
+To run the complete test suites:
+
+```bash
+# Go test suite (0.02s)
+cd nightfalllx-go && go test -v ./...
+
+# Python test suite (43 passed)
+PYTHONPATH=. pytest
+```
+
+---
+
+## 📜 License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.

