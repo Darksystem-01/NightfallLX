@@ -4,13 +4,22 @@ import (
 	"fmt"
 	"html"
 	"nightfalllx/pkg/client"
+	"nightfalllx/pkg/xss"
 	"strings"
 )
 
-type XSSModule struct{}
+type XSSModule struct {
+	engine *xss.Engine
+}
 
 func NewXSSModule() *XSSModule {
-	return &XSSModule{}
+	return NewXSSModuleWithConfig(xss.DefaultEngineConfig())
+}
+
+func NewXSSModuleWithConfig(cfg *xss.EngineConfig) *XSSModule {
+	return &XSSModule{
+		engine: xss.NewEngine(cfg),
+	}
 }
 
 func (m *XSSModule) Name() string {
@@ -18,7 +27,7 @@ func (m *XSSModule) Name() string {
 }
 
 func (m *XSSModule) Description() string {
-	return "Reflected Cross-Site Scripting (XSS) context and filter analyzer"
+	return "Reflected and DOM Cross-Site Scripting (XSS) context and filter analyzer"
 }
 
 var xssProbes = []struct {
@@ -35,6 +44,56 @@ var xssProbes = []struct {
 }
 
 func (m *XSSModule) Run(target *Target, c *client.Client) ([]*Finding, error) {
+	// 1. Primary: Run native Go intelligent XSS engine
+	if m.engine != nil {
+		xTarget := &xss.Target{
+			URL:     target.URL,
+			Method:  target.Method,
+			Params:  target.Params,
+			Data:    target.Data,
+			Headers: target.Headers,
+			IsJSON:  target.IsJSON,
+			RawJSON: target.RawJSON,
+		}
+		xFindings, err := m.engine.ScanTarget(xTarget, c)
+		if err == nil && len(xFindings) > 0 {
+			var findings []*Finding
+			for _, xf := range xFindings {
+				conf := ConfidencePossible
+				switch xf.ConfidenceLevel {
+				case "confirmed":
+					conf = ConfidenceConfirmed
+				case "probable":
+					conf = ConfidenceProbable
+				}
+				sev := SeverityMedium
+				switch xf.Severity {
+				case "HIGH":
+					sev = SeverityHigh
+				case "LOW":
+					sev = SeverityLow
+				}
+				f := &Finding{
+					Module:          m.Name(),
+					Title:           xf.Title,
+					Severity:        sev,
+					Confidence:      xf.Confidence,
+					ConfidenceLevel: conf,
+					URL:             xf.URL,
+					Parameter:       xf.Parameter,
+					Payload:         xf.Payload,
+					Detail:          xf.Detail,
+					Evidence:        xf.Evidence,
+					Remediation:     xf.Remediation,
+					CWEID:           xf.CWEID,
+				}
+				findings = append(findings, f)
+			}
+			return findings, nil
+		}
+	}
+
+	// 2. Fallback: Fast heuristic probe loop
 	var findings []*Finding
 	isPost := strings.ToUpper(target.Method) == "POST"
 
@@ -82,3 +141,4 @@ func (m *XSSModule) Run(target *Target, c *client.Client) ([]*Finding, error) {
 
 	return findings, nil
 }
+

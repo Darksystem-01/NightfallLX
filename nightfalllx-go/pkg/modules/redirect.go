@@ -21,12 +21,93 @@ func (m *RedirectModule) Description() string {
 	return "Open URL Redirection and header injection detector"
 }
 
+/*
+CATEGORY: Open URL Redirection Vectors (50+ entries)
+Sources: PayloadsAllTheThings Open Redirect, OWASP Unvalidated Redirects, PortSwigger Open Redirect Cheat Sheet.
+Contexts:
+- Protocol-relative slashes (//, ///, ////)
+- Backslash & forward-slash hybrids (/\, \/, \\)
+- URL-encoded slash variants (%2f, %5c, %252f)
+- Userinfo @ delimiter tricks (target.lab@example.com)
+- Query & Fragment confusion (?target, #target, %23)
+- Scheme-less & colon variations (https:example.com)
+- Whitespace & control character prefixes (%09, %20)
+*/
 var redirectPayloads = []string{
+	// 1. Standard Absolute URLs
 	"https://example.com",
+	"http://example.com",
+	"https://example.com/",
+	"http://example.com/",
+	"https://example.com:443/",
+	"http://example.com:80/",
+
+	// 2. Protocol-Relative Slashes
 	"//example.com",
+	"//example.com/",
+	"///example.com",
+	"////example.com",
+	"/////example.com",
+	"//example.com:443",
+	"//example.com:80",
+
+	// 3. Backslash Hybrid Evasions
 	"/\\example.com",
-	"https://example.com%23",
+	"\\/example.com",
+	"\\\\example.com",
+	"\\\\example.com\\",
+	"/\\/example.com",
+	"/\\example.com/",
+	"\\example.com",
+
+	// 4. Single URL-Encoded Slashes
+	"%2f%2fexample.com",
+	"%2f%2fexample.com%2f",
+	"%2f%5cexample.com",
+	"%5c%2fexample.com",
+	"%5c%5cexample.com",
+	"/%2fexample.com",
+	"/%5cexample.com",
+	"\\%2fexample.com",
+	"\\%5cexample.com",
+
+	// 5. Double URL-Encoded Slashes
+	"%252f%252fexample.com",
+	"%255c%255cexample.com",
+	"..%2f..%2fexample.com",
+
+	// 6. Userinfo / @ Character Delimiter Exploits
+	"https://target.lab@example.com",
+	"http://target.lab@example.com",
+	"https://target.lab:password@example.com",
+	"//target.lab@example.com",
+	"/\\target.lab@example.com",
+	"https://example.com@target.lab",
+
+	// 7. Query String & Fragment Confusion
+	"https://example.com?target.lab",
+	"https://example.com#target.lab",
+	"https://example.com%23target.lab",
+	"https://example.com?dest=target.lab",
+	"https://example.com/target.lab",
+
+	// 8. Scheme Omission & Colon Variations
 	"https:example.com",
+	"http:example.com",
+	"https:/example.com",
+	"http:/example.com",
+
+	// 9. Whitespace & Control Character Prefixes
+	" https://example.com",
+	"\thttps://example.com",
+	"%09//example.com",
+	"%20//example.com",
+	"%0d%0aLocation:%20https://example.com",
+
+	// 10. Subdomain & Parameter Spoofing
+	"https://example.com.target.lab",
+	"https://example.com%2523.target.lab",
+	"https://example.com?.target.lab",
 }
 
 func (m *RedirectModule) Run(target *Target, c *client.Client) ([]*Finding, error) {

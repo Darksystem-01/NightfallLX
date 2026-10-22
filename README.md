@@ -18,8 +18,10 @@ NightfallLX is an evidence-first, multi-threaded security assessment and web fuz
 - 📬 **Burp Suite Raw HTTP Request Parser (`-r request.txt`):** Native parsing of raw HTTP requests exported from Burp Suite (headers, cookies, query/POST params, and `*`/`FUZZ` injection markers).
 - 🌐 **ffuf-Compatible Subdomain & VHost Finder (`--sub`):** High-speed virtual host and subdomain fuzzing with **Auto-Calibration (`-ac`)** to automatically eliminate wildcard/catch-all false positives, paired with rich matchers and filters (`-mc`, `-fc`, `-ms`, `-fs`, `-mw`, `-fw`, `-ml`, `-fl`).
 - ⚡ **Mega-Fast 1,800+ req/sec Goroutine Fuzzer:** Ultra-fast directory and parameter fuzzing with zero runtime dependencies.
-- 🛡️ **10 Automated Vulnerability Modules:** Differential SQLi, SSTI, LFI, CMDi, XSS, CORS, SSRF, Open Redirect, JWT misconfiguration, and WAF fingerprinting.
-- 📋 **Executive Lab Reports:** Automatic generation of Markdown (`lab_report.md`) and JSON (`lab_report.json`) with ready-to-replay `curl` commands.
+- 🛡️ **Intelligent Native Go XSS Engine (`pkg/xss`):** Reflection context classification via `golang.org/x/net/html` AST (10 distinct contexts), character probing (`<>"'/\();=`), 335 embedded harmless test vectors, static DOM source-to-sink flow analysis (`--dom`), form parsing with automatic CSRF token re-fetching (`--forms`), and stored XSS detection (`--stored`).
+- 🔎 **Version-Matched Reference Lookup (`pkg/intel`):** Automatically correlates detected server banners (e.g. `Server: PHP/3.4.5`) with local `searchsploit` exploit databases and NIST NVD 2.0 REST API (`-nvd`). Metadata and local paths only; strictly **zero execution, compilation, or downloading** of exploits.
+- ⚡ **Enhanced Module Vectors (50–100 per category):** Expanded marker-based test vectors for `lfi`, `sqli`, `ssti`, `cmdi`, `ssrf`, `redirect`, `nosqli`, and `xxe` with zero false positives.
+- 📋 **Executive Lab Reports:** Automatic generation of Markdown (`lab_report.md`) and JSON (`lab_report.json`) with isolated "Version-matched intel (not verified)" section and ready-to-replay `curl` commands.
 
 ---
 

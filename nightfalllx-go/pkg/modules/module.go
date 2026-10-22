@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"nightfalllx/pkg/client"
 	"nightfalllx/pkg/oast"
+	"nightfalllx/pkg/xss"
 	"regexp"
 	"strconv"
 	"strings"
@@ -75,6 +76,22 @@ type Target struct {
 	RawJSON    string
 	JSONLeaves map[string]interface{}
 	OAST       *oast.Server
+}
+
+// ToXSSTarget converts a Target into an xss.Target.
+func (t *Target) ToXSSTarget() *xss.Target {
+	if t == nil {
+		return nil
+	}
+	return &xss.Target{
+		URL:     t.URL,
+		Method:  t.Method,
+		Params:  t.Params,
+		Data:    t.Data,
+		Headers: t.Headers,
+		IsJSON:  t.IsJSON,
+		RawJSON: t.RawJSON,
+	}
 }
 
 // Parameters returns a list of testable parameter names.

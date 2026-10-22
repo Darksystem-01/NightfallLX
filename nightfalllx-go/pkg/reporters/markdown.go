@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"nightfalllx/pkg/intel"
 	"nightfalllx/pkg/modules"
 	"os"
 	"regexp"
@@ -16,8 +17,13 @@ var (
 	cookieMaskRegex = regexp.MustCompile(`(?i)(session(?:id)?|token|auth|jwt)=([a-zA-Z0-9_\-\.]{6,})`)
 )
 
-// WriteMarkdownReport writes a formatted lab assessment report to a markdown file.
+// WriteMarkdownReport writes a formatted lab assessment report to a markdown file (backward-compatible).
 func WriteMarkdownReport(target *modules.Target, findings []*modules.Finding, filePath string) error {
+	return WriteMarkdownReportWithIntel(target, findings, nil, filePath)
+}
+
+// WriteMarkdownReportWithIntel writes assessment findings and the version-matched intel reference section.
+func WriteMarkdownReportWithIntel(target *modules.Target, findings []*modules.Finding, intelRep *intel.IntelReport, filePath string) error {
 	f, err := os.Create(filePath)
 	if err != nil {
 		return err
@@ -70,6 +76,31 @@ func WriteMarkdownReport(target *modules.Target, findings []*modules.Finding, fi
 		fmt.Fprintf(f, "#### Remediation\n%s\n\n", item.Remediation)
 	}
 
+	// Version-Matched Intel Section (Not Verified)
+	if intelRep != nil && len(intelRep.Findings) > 0 {
+		fmt.Fprintf(f, "\n---\n\n## Version-matched intel (not verified)\n\n")
+		fmt.Fprintf(f, "> **Notice:** %s\n\n", intelRep.Disclaimer)
+		fmt.Fprintf(f, "| Query | Source | EDB-ID / CVE | Title | Local Reference Path / Score |\n")
+		fmt.Fprintf(f, "|---|---|---|---|---|\n")
+
+		for _, item := range intelRep.Findings {
+			cveStr := strings.Join(item.CVEs, ", ")
+			if cveStr == "" {
+				cveStr = item.EDBID
+			}
+			metaRef := item.LocalPath
+			if metaRef == "" && item.CVSS > 0 {
+				metaRef = fmt.Sprintf("CVSS: %.1f", item.CVSS)
+			}
+			fmt.Fprintf(f, "| `%s` | `%s` | %s | %s | `%s` |\n",
+				escapeMarkdownPipe(item.Query),
+				escapeMarkdownPipe(item.Source),
+				escapeMarkdownPipe(cveStr),
+				escapeMarkdownPipe(item.Title),
+				escapeMarkdownPipe(metaRef))
+		}
+	}
+
 	return nil
 }
 
@@ -91,12 +122,16 @@ func escapeMarkdownPipe(s string) string {
 	return strings.ReplaceAll(s, "|", "\\|")
 }
 
-// WriteJSONReport writes findings to a JSON file.
+// WriteJSONReport writes findings to a JSON file (backward-compatible).
 func WriteJSONReport(target *modules.Target, findings []*modules.Finding, filePath string) error {
+	return WriteJSONReportWithIntel(target, findings, nil, filePath)
+}
+
+// WriteJSONReportWithIntel writes findings and intel metadata to a JSON file.
+func WriteJSONReportWithIntel(target *modules.Target, findings []*modules.Finding, intelRep *intel.IntelReport, filePath string) error {
 	if findings == nil {
 		findings = []*modules.Finding{}
 	}
-	// Ensure confidence level is set on each finding
 	for _, f := range findings {
 		if f.ConfidenceLevel == "" {
 			if f.Confidence >= 90 {
@@ -122,6 +157,10 @@ func WriteJSONReport(target *modules.Target, findings []*modules.Finding, filePa
 		"scan_date":      time.Now().UTC().Format(time.RFC3339),
 		"total_findings": len(findings),
 		"findings":       findings,
+	}
+
+	if intelRep != nil {
+		data["intel_report"] = intelRep
 	}
 
 	bytes, err := json.MarshalIndent(data, "", "  ")

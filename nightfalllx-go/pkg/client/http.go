@@ -335,3 +335,35 @@ func (c *Client) rawRequest(method, reqURL, data string, customHeaders map[strin
 		Location:   resp.Header.Get("Location"),
 	}, nil
 }
+
+// Get issues a GET request with configured headers and cookies.
+func (c *Client) Get(reqURL string) (*Response, error) {
+	return c.Request("GET", reqURL, "", nil)
+}
+
+// Post issues a POST request with URL-encoded form data.
+func (c *Client) Post(reqURL string, data map[string]string) (*Response, error) {
+	vals := url.Values{}
+	for k, v := range data {
+		vals.Set(k, v)
+	}
+	headers := map[string]string{
+		"Content-Type": "application/x-www-form-urlencoded",
+	}
+	return c.Request("POST", reqURL, vals.Encode(), headers)
+}
+
+// PostRaw issues a POST request with raw body and specified content type.
+func (c *Client) PostRaw(reqURL, body, contentType string) (*Response, error) {
+	headers := map[string]string{}
+	if contentType != "" {
+		headers["Content-Type"] = contentType
+	}
+	return c.Request("POST", reqURL, body, headers)
+}
+
+// DoCustom issues an arbitrary HTTP method request with custom headers and body.
+func (c *Client) DoCustom(method, reqURL string, headers map[string]string, body string) (*Response, error) {
+	return c.Request(method, reqURL, body, headers)
+}
+

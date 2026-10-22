@@ -37,5 +37,9 @@ scan_plan.md
 lab_server.py
 nightfalllx
 nightfalllx.exe
-*.fuzz.json
 lab_report.*
+.intel_cache/
+*.intel_cache/
+lab_output/
+*.test
+*.out
