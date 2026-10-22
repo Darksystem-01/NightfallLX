@@ -1,0 +1,37 @@
+# NightfallLX generated output
+.vapf-loot/
+.nightfalllx/
+loot/
+reports/
+*.sarif
+*.report.md
+*.report.json
+
+# Secrets and local environment
+.env
+.env.*
+*.pem
+*.key
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+*.egg-info/
+dist/
+build/
+.coverage
+htmlcov/
+
+# Generated artefacts
+*.log
+*.hprof
+heapdump*
+p0*
+ports.txt
+scan_plan.md
+lab_server.py
