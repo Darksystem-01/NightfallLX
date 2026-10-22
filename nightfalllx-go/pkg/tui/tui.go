@@ -9,6 +9,8 @@ import (
 	"nightfalllx/pkg/fuzzer"
 	"nightfalllx/pkg/modules"
 	"nightfalllx/pkg/parser"
+	"nightfalllx/pkg/shodan"
+	"nightfalllx/pkg/sitemap"
 	"nightfalllx/pkg/troubleshoot"
 	"os"
 	"os/exec"
@@ -181,12 +183,14 @@ func (t *InteractiveTUI) Draw() {
 		{1, "🎯  Set Target URL / Change Target", "Update target web application address"},
 		{2, "🔍  Deep Tech Detector (Wappalyzer+)", "Discover PHP/Apache/Laravel versions, templates & headers"},
 		{3, "🌐  Subdomain & VHost Discovery", "Fast ffuf-compatible DNS & VHost fuzzing with auto-calibration"},
-		{4, "⚡  High-Speed Directory & Param Fuzzer", "Concurrent 1800+ req/s endpoint and wordlist fuzzing"},
-		{5, "🛡️   Run 10 Vulnerability Modules", "Scan for SQLi, SSTI, LFI, CMDi, XSS, CORS, SSRF, JWT, WAF"},
-		{6, "📬  Load Burp Suite Request (-r)", "Import raw request.txt from Burp Suite Proxy/Repeater"},
-		{7, "🩺  Doctor & Diagnostics Check", "Troubleshoot DNS, TCP, TLS, and Proxy connectivity"},
-		{8, "🚀  Launch Comprehensive Audit", "Full assessment: Tech + VHosts + Security Modules"},
-		{9, "❌  Exit NightfallLX", "Exit interactive dashboard to terminal"},
+		{4, "🗺️   Full Site Map & Web Crawler", "Spider architecture, endpoints, forms & parameter tree"},
+		{5, "🛰️   Shodan OSINT Intelligence", "Passive DNS subdomains, open ports, services & CVEs"},
+		{6, "⚡  High-Speed Directory & Param Fuzzer", "Concurrent 1800+ req/s endpoint and wordlist fuzzing"},
+		{7, "🛡️   Run 10 Vulnerability Modules", "Scan for SQLi, SSTI, LFI, CMDi, XSS, CORS, SSRF, JWT, WAF"},
+		{8, "📬  Load Burp Suite Request (-r)", "Import raw request.txt from Burp Suite Proxy/Repeater"},
+		{9, "🩺  Doctor & Diagnostics Check", "Troubleshoot DNS, TCP, TLS, and Proxy connectivity"},
+		{10, "🚀  Launch Comprehensive Audit", "Full assessment: Tech + Map + Shodan + Vulns"},
+		{11, "❌  Exit NightfallLX", "Exit interactive dashboard to terminal"},
 	}
 
 	t.Items = nil
@@ -360,7 +364,37 @@ func (t *InteractiveTUI) executeItem(id int) {
 		_, _ = f.Run()
 		t.waitReturn()
 
-	case 4: // High-Speed Fuzzer
+	case 4: // Full Site Map & Web Crawler
+		fmt.Printf("\n\033[1;36m[*] Crawling web architecture and attack surface on:\033[0m %s ...\n", t.TargetURL)
+		sp, err := sitemap.NewSpider(t.TargetURL, 3, 50)
+		if err != nil {
+			fmt.Printf("\033[31m[!] Spider initialization failed: %v\033[0m\n", err)
+		} else {
+			sm := sp.Crawl()
+			sitemap.PrintSiteMap(sm)
+		}
+		t.waitReturn()
+
+	case 5: // Shodan OSINT Intelligence
+		fmt.Printf("\n\033[1;36m[*] Querying Shodan OSINT Intelligence for:\033[0m %s ...\n", t.TargetURL)
+		shodanClient := shodan.NewClient("")
+		domain, ip, _ := shodan.ResolveTarget(t.TargetURL)
+		var hostInfo *shodan.HostInfo
+		var dnsInfo *shodan.DomainInfo
+		if ip != "" {
+			hostInfo, _ = shodanClient.LookupHost(ip)
+		}
+		if domain != "" {
+			dnsInfo, _ = shodanClient.LookupDomain(domain)
+		}
+		if hostInfo != nil || dnsInfo != nil {
+			shodan.PrintReport(domain, hostInfo, dnsInfo)
+		} else {
+			fmt.Println("\033[33m[!] No Shodan OSINT data found or API limit reached.\033[0m")
+		}
+		t.waitReturn()
+
+	case 6: // High-Speed Fuzzer
 		fmt.Printf("\n\033[1;36m[*] Launching High-Speed Directory & Endpoint Fuzzer on:\033[0m %s/FUZZ ...\n", strings.TrimSuffix(t.TargetURL, "/"))
 		cfg := &fuzzer.Config{
 			URL:           strings.TrimSuffix(t.TargetURL, "/") + "/FUZZ",
@@ -374,12 +408,12 @@ func (t *InteractiveTUI) executeItem(id int) {
 		_, _ = f.Run()
 		t.waitReturn()
 
-	case 5: // 10 Vulnerability Modules
+	case 7: // 10 Vulnerability Modules
 		fmt.Printf("\n\033[1;36m[*] Executing 10 Vulnerability Assessment Modules against:\033[0m %s ...\n", t.TargetURL)
 		t.runAllVulnModules()
 		t.waitReturn()
 
-	case 6: // Load Burp Suite Request
+	case 8: // Load Burp Suite Request
 		fmt.Print("\n\033[1;36m[📬 Load Burp Suite Raw Request]\033[0m\nPath to request file (e.g. request.txt): ")
 		reader := bufio.NewReader(os.Stdin)
 		pathInput, _ := reader.ReadString('\n')
@@ -397,14 +431,14 @@ func (t *InteractiveTUI) executeItem(id int) {
 		}
 		t.waitReturn()
 
-	case 7: // Doctor Diagnostics
+	case 9: // Doctor Diagnostics
 		fmt.Printf("\n\033[1;36m[*] Running Diagnostics & Doctor on:\033[0m %s ...\n", t.TargetURL)
 		doc := troubleshoot.NewDoctor(t.TargetURL, t.Proxy, t.Wordlist)
 		checks := doc.RunAll()
 		_ = troubleshoot.PrintDoctorReport(checks)
 		t.waitReturn()
 
-	case 8: // Launch Full Assessment
+	case 10: // Launch Full Assessment
 		fmt.Printf("\n\033[1;35m════════════════════════════════════════════════════════════════════════════════════\033[0m\n")
 		fmt.Printf("\033[1;36m  🚀 NIGHTFALL-LX FULL AUTOMATED COMPREHENSIVE ASSESSMENT: %s\033[0m\n", t.TargetURL)
 		fmt.Printf("\033[1;35m════════════════════════════════════════════════════════════════════════════════════\033[0m\n\n")
@@ -425,7 +459,7 @@ func (t *InteractiveTUI) executeItem(id int) {
 		fmt.Println("\n\033[1;32m[✓] Comprehensive Assessment completed! Report saved to lab_report.md and lab_report.json\033[0m")
 		t.waitReturn()
 
-	case 9: // Exit
+	case 11: // Exit
 		os.Exit(0)
 	}
 

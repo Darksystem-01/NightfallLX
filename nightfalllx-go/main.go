@@ -10,6 +10,8 @@ import (
 	"nightfalllx/pkg/modules"
 	"nightfalllx/pkg/parser"
 	"nightfalllx/pkg/reporters"
+	"nightfalllx/pkg/shodan"
+	"nightfalllx/pkg/sitemap"
 	"nightfalllx/pkg/troubleshoot"
 	"nightfalllx/pkg/tui"
 	"os"
@@ -72,6 +74,11 @@ func main() {
 		timeoutSec     int
 		isDoctor       bool
 		isTech         bool
+		isShodan       bool
+		shodanKey      string
+		isSiteMap      bool
+		spiderDepth    int
+		spiderMaxURLs  int
 		isInteractive  bool
 		headersFlag    arrayFlags
 	)
@@ -83,11 +90,18 @@ func main() {
 	flag.BoolVar(&isHTTPS, "https", false, "Force HTTPS scheme (useful with -r or raw domain)")
 	flag.BoolVar(&isHTTPS, "ssl", false, "Alias for --https")
 
-	// Interactive Mouse Dashboard & Tech Detector
+	// Interactive Mouse Dashboard, Tech Detector, Sitemap & Shodan
 	flag.BoolVar(&isInteractive, "i", false, "Launch interactive mouse-controllable TUI dashboard")
 	flag.BoolVar(&isInteractive, "ui", false, "Alias for -i (Interactive Mouse TUI)")
 	flag.BoolVar(&isInteractive, "tui", false, "Alias for -i (Interactive Mouse TUI)")
 	flag.BoolVar(&isTech, "tech", false, "Run Wappalyzer-grade technology & exact version detector")
+	flag.BoolVar(&isSiteMap, "map", false, "Spider and generate full web application architecture site map")
+	flag.BoolVar(&isSiteMap, "spider", false, "Alias for --map")
+	flag.BoolVar(&isSiteMap, "crawl", false, "Alias for --map")
+	flag.IntVar(&spiderDepth, "depth", 3, "Web crawler recursion depth (default: 3)")
+	flag.IntVar(&spiderMaxURLs, "max-urls", 50, "Max URLs to discover during spidering (default: 50)")
+	flag.BoolVar(&isShodan, "shodan", false, "Run Shodan OSINT intelligence reconnaissance on target IP/domain")
+	flag.StringVar(&shodanKey, "shodan-key", "", "Shodan API Key (optional, defaults to built-in or SHODAN_API_KEY env)")
 
 	// Vulnerability Assessment Modules
 	flag.StringVar(&moduleList, "m", "all", "Comma-separated modules: sqli, ssti, lfi, cmdi, xss, cors, redirect, ssrf, jwt, waf (or 'all')")
@@ -142,6 +156,8 @@ func main() {
 USAGE:
   nightfalllx -u <target-url> [options]
   nightfalllx -tech -u <target-url>
+  nightfalllx -map -u <target-url>
+  nightfalllx -shodan -u <target-url>
   nightfalllx -r <burp-request.txt> [options]
   nightfalllx -u "http://target.lab/FUZZ" -w wordlist.txt
   nightfalllx -i   (Launch Interactive Mouse-Controllable Dashboard)
@@ -152,8 +168,13 @@ TARGET SPECIFICATION:
   -domain string   Target domain for Subdomain & VHost discovery
   -https, -ssl     Force HTTPS scheme
 
-ASSESSMENT & FINGERPRINTING:
+ASSESSMENT, OSINT & RECON:
   -tech            Deep technology & exact version discovery (Wappalyzer-grade)
+  -map, -spider    Spider target architecture & generate full sitemap
+  -depth int       Crawler recursion depth (default: 3)
+  -max-urls int    Max URLs to discover during spidering (default: 50)
+  -shodan          Run Shodan OSINT reconnaissance (subdomains, ports, CVEs)
+  -shodan-key str  Shodan API Key (optional, defaults to built-in key)
   -m string        Modules to run: sqli, ssti, lfi, cmdi, xss, cors, redirect, ssrf, jwt, waf (default: "all")
 
 HIGH-SPEED FUZZING & VHOSTS (ffuf-style):
@@ -318,6 +339,42 @@ HTTP & PROXY CONFIGURATION:
 			os.Exit(1)
 		}
 		detector.PrintReport(rep)
+		return
+	}
+
+	// 6b. Standalone Full Site Map & Web Crawler
+	if isSiteMap {
+		sp, err := sitemap.NewSpider(rawURL, spiderDepth, spiderMaxURLs)
+		if err != nil {
+			fmt.Printf("\033[31m[!] Spider init failed: %v\033[0m\n", err)
+			os.Exit(1)
+		}
+		sm := sp.Crawl()
+		sitemap.PrintSiteMap(sm)
+		return
+	}
+
+	// 6c. Standalone Shodan OSINT Intelligence Reconnaissance
+	if isShodan {
+		shodanClient := shodan.NewClient(shodanKey)
+		domainTarget, ipTarget, err := shodan.ResolveTarget(rawURL)
+		if err != nil && domainTarget == "" && ipTarget == "" {
+			fmt.Printf("\033[31m[!] Could not resolve target: %v\033[0m\n", err)
+			os.Exit(1)
+		}
+		var hostInfo *shodan.HostInfo
+		var dnsInfo *shodan.DomainInfo
+		if ipTarget != "" {
+			hostInfo, _ = shodanClient.LookupHost(ipTarget)
+		}
+		if domainTarget != "" {
+			dnsInfo, _ = shodanClient.LookupDomain(domainTarget)
+		}
+		if hostInfo != nil || dnsInfo != nil {
+			shodan.PrintReport(domainTarget, hostInfo, dnsInfo)
+		} else {
+			fmt.Println("\033[33m[!] No Shodan OSINT data found or API limit reached.\033[0m")
+		}
 		return
 	}
 
