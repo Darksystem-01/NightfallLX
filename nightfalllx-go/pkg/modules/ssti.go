@@ -42,9 +42,14 @@ func (m *SSTIModule) Run(target *Target, c *client.Client) ([]*Finding, error) {
 	var findings []*Finding
 	isPost := strings.ToUpper(target.Method) == "POST"
 
+	headers := map[string]string{}
+	if target.IsJSON {
+		headers["Content-Type"] = "application/json"
+	}
+
 	for _, param := range target.Parameters() {
 		origVal := target.Params[param]
-		if isPost {
+		if isPost && !target.IsJSON {
 			origVal = target.Data[param]
 		}
 
@@ -52,16 +57,15 @@ func (m *SSTIModule) Run(target *Target, c *client.Client) ([]*Finding, error) {
 		var baseResp *client.Response
 		var err error
 		if isPost {
-			baseResp, err = c.Request("POST", target.URL, target.BuildDataWithParam(param, origVal), nil)
+			baseResp, err = c.Request("POST", target.URL, target.BuildBodyWithParam(param, origVal), headers)
 		} else {
 			baseResp, err = c.Request("GET", target.BuildURLWithParam(param, origVal), "", nil)
 		}
-		if err != nil {
+		if err != nil || baseResp == nil {
 			continue
 		}
 
 		for _, eng := range sstiEngines {
-			// Ensure canaries are not already in baseline
 			if strings.Contains(baseResp.Body, eng.Expect1) || strings.Contains(baseResp.Body, eng.Expect2) {
 				continue
 			}
@@ -69,38 +73,39 @@ func (m *SSTIModule) Run(target *Target, c *client.Client) ([]*Finding, error) {
 			// First probe
 			var resp1 *client.Response
 			if isPost {
-				resp1, err = c.Request("POST", target.URL, target.BuildDataWithParam(param, eng.First), nil)
+				resp1, err = c.Request("POST", target.URL, target.BuildBodyWithParam(param, eng.First), headers)
 			} else {
 				resp1, err = c.Request("GET", target.BuildURLWithParam(param, eng.First), "", nil)
 			}
-			if err != nil || !strings.Contains(resp1.Body, eng.Expect1) {
+			if err != nil || resp1 == nil || !strings.Contains(resp1.Body, eng.Expect1) {
 				continue
 			}
 
 			// Second probe (differential check)
 			var resp2 *client.Response
 			if isPost {
-				resp2, err = c.Request("POST", target.URL, target.BuildDataWithParam(param, eng.Second), nil)
+				resp2, err = c.Request("POST", target.URL, target.BuildBodyWithParam(param, eng.Second), headers)
 			} else {
 				resp2, err = c.Request("GET", target.BuildURLWithParam(param, eng.Second), "", nil)
 			}
-			if err != nil || !strings.Contains(resp2.Body, eng.Expect2) {
+			if err != nil || resp2 == nil || !strings.Contains(resp2.Body, eng.Expect2) {
 				continue
 			}
 
-			findings = append(findings, &Finding{
+			f := &Finding{
 				Module:      m.Name(),
 				Title:       fmt.Sprintf("Server-Side Template Injection (%s)", eng.Name),
-				Severity:    SeverityHigh,
-				Confidence:  100,
+				Severity:    SeverityCritical,
 				URL:         target.URL,
 				Parameter:   param,
-				Payload:     fmt.Sprintf("%s -> %s and %s -> %s", eng.First, eng.Expect1, eng.Second, eng.Expect2),
-				Detail:      fmt.Sprintf("Confirmed SSTI: template engine evaluated independent expressions inside parameter '%s'.", param),
-				Evidence:    fmt.Sprintf("Engine: %s, probe 1 returned %s, probe 2 returned %s", eng.Name, eng.Expect1, eng.Expect2),
-				Remediation: "Do not pass user input directly into template renderers. Use context-aware logic.",
+				Payload:     fmt.Sprintf("%s -> %s", eng.First, eng.Second),
+				Detail:      fmt.Sprintf("Confirmed dynamic mathematical evaluation in template engine (%s evaluates to %s, %s evaluates to %s).", eng.First, eng.Expect1, eng.Second, eng.Expect2),
+				Evidence:    fmt.Sprintf("Payload %s produced expected evaluated output %s in response body.", eng.First, eng.Expect1),
+				Remediation: "Never concatenate user input directly into templates. Use static templates with contextual data models.",
 				CWEID:       1336,
-			})
+			}
+			f.SetConfidence(ConfidenceConfirmed)
+			findings = append(findings, f)
 			break
 		}
 	}

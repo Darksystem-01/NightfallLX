@@ -77,17 +77,6 @@ var exposureProbes = []struct {
 		Regex:    regexp.MustCompile(`(?i)("swagger":\s*"2\.|"openapi":\s*"3\.)`),
 		Title:    "Exposed Swagger / OpenAPI Specification (/swagger.json)",
 		Severity: SeverityLow,
-		CWEID:    200,
-	},
-	{
-		Path:     "/graphql",
-		Method:   "POST",
-		Body:     `{"query":"{__schema{types{name}}}"}`,
-		Headers:  map[string]string{"Content-Type": "application/json"},
-		Regex:    regexp.MustCompile(`"__schema"\s*:\s*\{\s*"types"`),
-		Title:    "Enabled GraphQL Schema Introspection Query (/graphql)",
-		Severity: SeverityLow,
-		CWEID:    200,
 	},
 }
 
@@ -117,11 +106,10 @@ func (m *ExposureModule) Run(target *Target, c *client.Client) ([]*Finding, erro
 			if len(evidence) > 200 {
 				evidence = evidence[:200]
 			}
-			findings = append(findings, &Finding{
+			f := &Finding{
 				Module:      m.Name(),
 				Title:       probe.Title,
 				Severity:    probe.Severity,
-				Confidence:  100,
 				URL:         probeURL,
 				Parameter:   probe.Path,
 				Payload:     probeURL,
@@ -129,7 +117,9 @@ func (m *ExposureModule) Run(target *Target, c *client.Client) ([]*Finding, erro
 				Evidence:    evidence,
 				Remediation: "Restrict public access to administrative, metadata, and configuration files via web server directives.",
 				CWEID:       probe.CWEID,
-			})
+			}
+			f.SetConfidence(ConfidenceConfirmed)
+			findings = append(findings, f)
 		}
 	}
 

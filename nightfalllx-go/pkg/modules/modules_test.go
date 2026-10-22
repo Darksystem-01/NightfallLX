@@ -1,6 +1,7 @@
 package modules
 
 import (
+	"bytes"
 	"encoding/base64"
 	"fmt"
 	"net/http"
@@ -361,13 +362,26 @@ func TestNoSQLiModule(t *testing.T) {
 }
 
 func TestUploadModule(t *testing.T) {
+	var lastUploadedContent string
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == "GET" {
+			if strings.Contains(r.URL.Path, "probe.php.png") {
+				w.WriteHeader(http.StatusOK)
+				w.Write([]byte(lastUploadedContent))
+				return
+			}
 			w.Write([]byte(`<html><form method="POST" enctype="multipart/form-data"><input type="file" name="avatar"></form></html>`))
 			return
 		}
+		_ = r.ParseMultipartForm(10 << 20)
+		file, _, err := r.FormFile("avatar")
+		if err == nil {
+			buf := new(bytes.Buffer)
+			_, _ = buf.ReadFrom(file)
+			lastUploadedContent = buf.String()
+		}
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{"status": "success", "file": "probe.php.png", "message": "file saved"}`))
+		w.Write([]byte(`{"status": "success", "path": "/uploads/probe.php.png"}`))
 	}))
 	defer ts.Close()
 
@@ -384,6 +398,9 @@ func TestUploadModule(t *testing.T) {
 	}
 	if len(findings) == 0 {
 		t.Fatalf("expected Upload finding, got none")
+	}
+	if findings[0].ConfidenceLevel != ConfidenceConfirmed {
+		t.Fatalf("expected Confirmed confidence level, got %s", findings[0].ConfidenceLevel)
 	}
 
 	// Negative fixture: No upload form
@@ -522,9 +539,16 @@ func TestHostHeaderModule(t *testing.T) {
 func TestCRLFModule(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		q := r.URL.Query().Get("lang")
-		if strings.Contains(q, "X-Injected-Header") || strings.Contains(q, "%0d%0a") {
-			w.Header().Set("X-Injected-Header", "nflx_crlf")
-			w.Header().Set("Set-Cookie", "nflx_crlf=1")
+		if strings.Contains(q, "\r\n") || strings.Contains(q, "\n") {
+			for _, line := range strings.Split(q, "\n") {
+				line = strings.TrimSpace(line)
+				if strings.HasPrefix(line, "X-Injected-Header:") {
+					w.Header().Set("X-Injected-Header", strings.TrimSpace(strings.TrimPrefix(line, "X-Injected-Header:")))
+				}
+				if strings.HasPrefix(line, "Set-Cookie:") {
+					w.Header().Set("Set-Cookie", strings.TrimSpace(strings.TrimPrefix(line, "Set-Cookie:")))
+				}
+			}
 		}
 		w.Write([]byte("hello"))
 	}))
@@ -556,6 +580,304 @@ func TestCRLFModule(t *testing.T) {
 	cleanFindings, _ := mod.Run(cleanTarget, c)
 	if len(cleanFindings) != 0 {
 		t.Fatalf("expected 0 CRLF findings on clean server, got %d", len(cleanFindings))
+	}
+}
+
+func TestGraphQLModule(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		buf := new(bytes.Buffer)
+		buf.ReadFrom(r.Body)
+		body := buf.String()
+
+		w.Header().Set("Content-Type", "application/json")
+		if strings.Contains(body, "__typename") && strings.Contains(body, "BatchTest") {
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte(`{"data":{"q1":"Query","q2":"Query","q3":"Query","q4":"Query","q5":"Query","q6":"Query","q7":"Query","q8":"Query","q9":"Query","q10":"Query"}}`))
+			return
+		}
+		if strings.Contains(body, "__schema") {
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte(`{"data":{"__schema":{"queryType":{"name":"Query"},"types":[{"name":"User","kind":"OBJECT"}]}}}`))
+			return
+		}
+		if strings.Contains(body, "__typename") {
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte(`{"data":{"__typename":"Query"}}`))
+			return
+		}
+		w.WriteHeader(http.StatusBadRequest)
+		w.Write([]byte(`{"errors":[{"message":"syntax error"}]}`))
+	}))
+	defer ts.Close()
+
+	c := client.NewClient("", 2*time.Second, true, "", nil)
+	target := &Target{URL: ts.URL + "/graphql", Method: "POST"}
+
+	mod := NewGraphQLModule()
+	findings, err := mod.Run(target, c)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(findings) < 2 {
+		t.Fatalf("expected at least 2 findings (introspection + batching), got %d", len(findings))
+	}
+
+	// Negative fixture: standard REST API
+	restTs := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/plain")
+		w.WriteHeader(http.StatusNotFound)
+		w.Write([]byte("Not found"))
+	}))
+	defer restTs.Close()
+
+	restFindings, _ := mod.Run(&Target{URL: restTs.URL, Method: "GET"}, c)
+	if len(restFindings) != 0 {
+		t.Fatalf("expected 0 GraphQL findings for REST API, got %d", len(restFindings))
+	}
+}
+
+func TestJWTModuleBypass(t *testing.T) {
+	validToken := "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c"
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		auth := r.Header.Get("Authorization")
+		if auth == "" {
+			w.WriteHeader(http.StatusUnauthorized)
+			w.Write([]byte("unauthorized"))
+			return
+		}
+		// Accepts alg:none or weak secret "secret"
+		if strings.Contains(auth, "eyJhbGciOiJub25lIiwidHlwIjoiSldUIn0") || strings.Contains(auth, "Bearer ") {
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte("admin welcome"))
+			return
+		}
+		w.WriteHeader(http.StatusForbidden)
+	}))
+	defer ts.Close()
+
+	c := client.NewClient("", 2*time.Second, true, "", nil)
+	target := &Target{
+		URL:     ts.URL,
+		Method:  "GET",
+		Headers: map[string]string{"Authorization": "Bearer " + validToken},
+	}
+
+	mod := NewJWTModule()
+	findings, err := mod.Run(target, c)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(findings) == 0 {
+		t.Fatalf("expected JWT bypass finding, got none")
+	}
+
+	// Negative fixture: endpoint that strictly rejects unauthenticated and invalid tokens
+	strictTs := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+		w.Write([]byte("unauthorized"))
+	}))
+	defer strictTs.Close()
+
+	strictFindings, _ := mod.Run(&Target{URL: strictTs.URL, Method: "GET", Headers: map[string]string{"Authorization": "Bearer " + validToken}}, c)
+	if len(strictFindings) != 0 {
+		t.Fatalf("expected 0 JWT findings on strict server, got %d", len(strictFindings))
+	}
+}
+
+func TestProtoPollutionModule(t *testing.T) {
+	polluted := false
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "POST" {
+			buf := new(bytes.Buffer)
+			buf.ReadFrom(r.Body)
+			if strings.Contains(buf.String(), "__proto__") || strings.Contains(buf.String(), "prototype") {
+				polluted = true
+				w.WriteHeader(http.StatusOK)
+				w.Write([]byte(`{"status":"ok","nflx":"polluted"}`))
+				return
+			}
+		}
+		if r.Method == "GET" {
+			if polluted {
+				w.WriteHeader(http.StatusOK)
+				w.Write([]byte(`{"status":"ok","user":"admin","nflx":"polluted"}`))
+				return
+			}
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte(`{"status":"ok","user":"guest"}`))
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer ts.Close()
+
+	c := client.NewClient("", 2*time.Second, true, "", nil)
+	target := &Target{URL: ts.URL, Method: "POST", IsJSON: true, RawJSON: `{"user":"test"}`}
+
+	mod := NewProtoPollutionModule()
+	findings, err := mod.Run(target, c)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(findings) == 0 {
+		t.Fatalf("expected prototype pollution finding, got none")
+	}
+
+	// Negative fixture: safe server that ignores and does not reflect pollution
+	safeTs := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"status":"clean"}`))
+	}))
+	defer safeTs.Close()
+
+	safeFindings, _ := mod.Run(&Target{URL: safeTs.URL, Method: "GET"}, c)
+	if len(safeFindings) != 0 {
+		t.Fatalf("expected 0 findings for safe server, got %d", len(safeFindings))
+	}
+}
+
+func TestMassAssignModule(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		buf := new(bytes.Buffer)
+		buf.ReadFrom(r.Body)
+		body := buf.String()
+
+		if strings.Contains(body, "role") && strings.Contains(body, "admin") {
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte(`{"success":true,"user":{"name":"john","role":"admin"}}`))
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"success":true,"user":{"name":"john","role":"user"}}`))
+	}))
+	defer ts.Close()
+
+	c := client.NewClient("", 2*time.Second, true, "", nil)
+	target := &Target{
+		URL:     ts.URL,
+		Method:  "POST",
+		IsJSON:  true,
+		RawJSON: `{"name":"john"}`,
+	}
+
+	mod := NewMassAssignModule()
+	findings, err := mod.Run(target, c)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(findings) == 0 {
+		t.Fatalf("expected mass assignment finding, got none")
+	}
+
+	// Negative fixture: endpoint that ignores extra properties
+	strictTs := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"success":true,"user":{"name":"john"}}`))
+	}))
+	defer strictTs.Close()
+
+	strictFindings, _ := mod.Run(&Target{URL: strictTs.URL, Method: "POST", IsJSON: true, RawJSON: `{"name":"john"}`}, c)
+	// Must not be confirmed (could be possible or 0, but not confirmed)
+	for _, f := range strictFindings {
+		if f.ConfidenceLevel == ConfidenceConfirmed {
+			t.Fatalf("did not expect Confirmed finding on strict server")
+		}
+	}
+}
+
+func TestDeserializeModule(t *testing.T) {
+	// Vulnerable endpoint passing Java serialized object and Python pickle in cookie
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Set-Cookie", "remember_me=rO0ABXNyABFqYXZhLnV0aWwuSGFzaE1hcA==; Path=/")
+		w.Write([]byte("ok"))
+	}))
+	defer ts.Close()
+
+	c := client.NewClient("", 2*time.Second, true, "", nil)
+	target := &Target{
+		URL:    ts.URL,
+		Method: "GET",
+		Params: map[string]string{
+			"state": "gASVNDAAAAAAAAB9cQAoWA...",
+		},
+	}
+
+	mod := NewDeserializeModule()
+	findings, err := mod.Run(target, c)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(findings) < 2 {
+		t.Fatalf("expected at least 2 deserialize findings (Python pickle in param + Java in response cookie), got %d", len(findings))
+	}
+
+	// Negative fixture: Clean standard query parameters and cookies
+	cleanTs := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("clean"))
+	}))
+	defer cleanTs.Close()
+
+	cleanTarget := &Target{URL: cleanTs.URL, Method: "GET", Params: map[string]string{"page": "1", "sort": "asc"}}
+	cleanFindings, _ := mod.Run(cleanTarget, c)
+	if len(cleanFindings) != 0 {
+		t.Fatalf("expected 0 deserialize findings on clean target, got %d", len(cleanFindings))
+	}
+}
+
+func TestJSONNestedSQLiAndIDOR(t *testing.T) {
+	// JSON endpoint with nested structures
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		buf := new(bytes.Buffer)
+		buf.ReadFrom(r.Body)
+		body := buf.String()
+
+		// Nested SQL error check
+		if strings.Contains(body, "'") || strings.Contains(body, "AND 1=2") {
+			w.WriteHeader(http.StatusInternalServerError)
+			w.Write([]byte(`{"error":"syntax error near '1=2' in MySQL statement"}`))
+			return
+		}
+
+		// Nested IDOR check
+		if strings.Contains(body, `"id":2`) || strings.Contains(body, `"id": 2`) {
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte(`{"user":{"id":2,"name":"bob_admin","role":"admin"}}`))
+			return
+		}
+
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"user":{"id":1,"name":"alice","role":"user"}}`))
+	}))
+	defer ts.Close()
+
+	c := client.NewClient("", 2*time.Second, true, "", nil)
+	jsonTarget := &Target{
+		URL:     ts.URL,
+		Method:  "POST",
+		IsJSON:  true,
+		RawJSON: `{"user":{"id":1,"name":"alice"}}`,
+	}
+	_ = jsonTarget.ParseJSONBody(jsonTarget.RawJSON)
+
+	// Test SQLi on JSON leaf
+	sqliMod := NewSQLiModule()
+	sqliFindings, err := sqliMod.Run(jsonTarget, c)
+	if err != nil {
+		t.Fatalf("unexpected sqli error: %v", err)
+	}
+	if len(sqliFindings) == 0 {
+		t.Fatalf("expected SQLi finding on JSON leaf, got none")
+	}
+
+	// Test IDOR on JSON leaf
+	idorMod := NewIDORModule()
+	idorFindings, err2 := idorMod.Run(jsonTarget, c)
+	if err2 != nil {
+		t.Fatalf("unexpected idor error: %v", err2)
+	}
+	if len(idorFindings) == 0 {
+		t.Fatalf("expected IDOR finding on JSON leaf, got none")
 	}
 }
 

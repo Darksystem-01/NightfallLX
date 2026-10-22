@@ -38,29 +38,33 @@ func (m *XSSModule) Run(target *Target, c *client.Client) ([]*Finding, error) {
 	var findings []*Finding
 	isPost := strings.ToUpper(target.Method) == "POST"
 
+	headers := map[string]string{}
+	if target.IsJSON {
+		headers["Content-Type"] = "application/json"
+	}
+
 	for _, param := range target.Parameters() {
 		for _, probe := range xssProbes {
 			var resp *client.Response
 			var err error
 
 			if isPost {
-				resp, err = c.Request("POST", target.URL, target.BuildDataWithParam(param, probe.Payload), nil)
+				resp, err = c.Request("POST", target.URL, target.BuildBodyWithParam(param, probe.Payload), headers)
 			} else {
 				resp, err = c.Request("GET", target.BuildURLWithParam(param, probe.Payload), "", nil)
 			}
 
-			if err != nil || resp.Body == "" {
+			if err != nil || resp == nil || resp.Body == "" {
 				continue
 			}
 
 			// Check if payload is reflected unescaped
 			escaped := html.EscapeString(probe.Payload)
 			if strings.Contains(resp.Body, probe.MustContain) && !strings.Contains(resp.Body, escaped) {
-				findings = append(findings, &Finding{
+				f := &Finding{
 					Module:      m.Name(),
 					Title:       fmt.Sprintf("Reflected Cross-Site Scripting (%s)", probe.Context),
 					Severity:    SeverityHigh,
-					Confidence:  95,
 					URL:         target.URL,
 					Parameter:   param,
 					Payload:     probe.Payload,
@@ -68,7 +72,9 @@ func (m *XSSModule) Run(target *Target, c *client.Client) ([]*Finding, error) {
 					Evidence:    fmt.Sprintf("Found raw unescaped payload '%s' in HTTP response body.", probe.MustContain),
 					Remediation: "Contextually encode user input before rendering in HTML, attributes, or JavaScript contexts. Use CSP.",
 					CWEID:       79,
-				})
+				}
+				f.SetConfidence(ConfidenceConfirmed)
+				findings = append(findings, f)
 				break
 			}
 		}

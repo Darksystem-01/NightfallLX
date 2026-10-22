@@ -28,10 +28,20 @@ func (m *IDORModule) Run(target *Target, c *client.Client) ([]*Finding, error) {
 	var findings []*Finding
 	isPost := strings.ToUpper(target.Method) == "POST"
 
+	headers := map[string]string{}
+	if target.IsJSON {
+		headers["Content-Type"] = "application/json"
+	}
+
 	for _, param := range target.Parameters() {
 		origVal := target.Params[param]
-		if isPost {
+		if isPost && !target.IsJSON {
 			origVal = target.Data[param]
+		}
+		if origVal == "" && target.IsJSON && target.JSONLeaves != nil {
+			if v, ok := target.JSONLeaves[param]; ok {
+				origVal = fmt.Sprintf("%v", v)
+			}
 		}
 
 		// Check if parameter name or value looks like an identifier
@@ -48,7 +58,7 @@ func (m *IDORModule) Run(target *Target, c *client.Client) ([]*Finding, error) {
 		// Baseline request with original identity
 		var baseResp *client.Response
 		if isPost {
-			baseResp, err = c.Request("POST", target.URL, target.BuildDataWithParam(param, origVal), nil)
+			baseResp, err = c.Request("POST", target.URL, target.BuildBodyWithParam(param, origVal), headers)
 		} else {
 			baseResp, err = c.Request("GET", target.BuildURLWithParam(param, origVal), "", nil)
 		}
@@ -77,10 +87,13 @@ func (m *IDORModule) Run(target *Target, c *client.Client) ([]*Finding, error) {
 				if target.Cookie2 != "" {
 					headers2["Cookie"] = target.Cookie2
 				}
+				if target.IsJSON {
+					headers2["Content-Type"] = "application/json"
+				}
 
 				var resp2 *client.Response
 				if isPost {
-					resp2, err = c.Request("POST", target.URL, target.BuildDataWithParam(param, origVal), headers2)
+					resp2, err = c.Request("POST", target.URL, target.BuildBodyWithParam(param, origVal), headers2)
 				} else {
 					resp2, err = c.Request("GET", target.BuildURLWithParam(param, origVal), "", headers2)
 				}
@@ -92,11 +105,10 @@ func (m *IDORModule) Run(target *Target, c *client.Client) ([]*Finding, error) {
 						if len(snippet) > 200 {
 							snippet = snippet[:200]
 						}
-						findings = append(findings, &Finding{
+						f := &Finding{
 							Module:      m.Name(),
 							Title:       "Insecure Direct Object Reference (IDOR) / BOLA",
 							Severity:    SeverityHigh,
-							Confidence:  100,
 							URL:         target.URL,
 							Parameter:   param,
 							Payload:     origVal,
@@ -104,7 +116,9 @@ func (m *IDORModule) Run(target *Target, c *client.Client) ([]*Finding, error) {
 							Evidence:    snippet,
 							Remediation: "Enforce server-side object-level authorization checks validating the requesting identity against object ownership.",
 							CWEID:       639,
-						})
+						}
+						f.SetConfidence(ConfidenceConfirmed)
+						findings = append(findings, f)
 						break
 					}
 				}
@@ -112,7 +126,7 @@ func (m *IDORModule) Run(target *Target, c *client.Client) ([]*Finding, error) {
 				// Case B: Single Identity parameter swapping
 				var swapResp *client.Response
 				if isPost {
-					swapResp, err = c.Request("POST", target.URL, target.BuildDataWithParam(param, testVal), nil)
+					swapResp, err = c.Request("POST", target.URL, target.BuildBodyWithParam(param, testVal), headers)
 				} else {
 					swapResp, err = c.Request("GET", target.BuildURLWithParam(param, testVal), "", nil)
 				}
@@ -125,11 +139,10 @@ func (m *IDORModule) Run(target *Target, c *client.Client) ([]*Finding, error) {
 						if len(snippet) > 200 {
 							snippet = snippet[:200]
 						}
-						findings = append(findings, &Finding{
+						f := &Finding{
 							Module:      m.Name(),
 							Title:       "Possible Insecure Direct Object Reference (IDOR)",
 							Severity:    SeverityMedium,
-							Confidence:  65,
 							URL:         target.URL,
 							Parameter:   param,
 							Payload:     testVal,
@@ -137,7 +150,9 @@ func (m *IDORModule) Run(target *Target, c *client.Client) ([]*Finding, error) {
 							Evidence:    snippet,
 							Remediation: "Verify user authorization against the requested resource ID server-side before returning records.",
 							CWEID:       639,
-						})
+						}
+						f.SetConfidence(ConfidencePossible)
+						findings = append(findings, f)
 						break
 					}
 				}

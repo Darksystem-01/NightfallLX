@@ -510,6 +510,10 @@ func (t *InteractiveTUI) runAllVulnModules() {
 		modules.NewUploadModule(),
 		modules.NewHostHeaderModule(),
 		modules.NewCRLFModule(),
+		modules.NewGraphQLModule(),
+		modules.NewProtoPollutionModule(),
+		modules.NewMassAssignModule(),
+		modules.NewDeserializeModule(),
 	}
 
 	for _, mod := range activeMods {
