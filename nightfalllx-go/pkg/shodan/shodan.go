@@ -58,10 +58,28 @@ type ShodanClient struct {
 	HTTPClient *http.Client
 }
 
-// NewClient creates a new Shodan client from CLI flag or SHODAN_API_KEY environment variable.
+// NewClient creates a new Shodan client from CLI flag, SHODAN_API_KEY environment variable,
+// or local host configuration file (~/.config/nightfalllx/shodan.key).
 func NewClient(apiKey string) *ShodanClient {
 	if apiKey == "" {
 		apiKey = os.Getenv("SHODAN_API_KEY")
+	}
+	if apiKey == "" {
+		if home, err := os.UserHomeDir(); err == nil {
+			configPaths := []string{
+				home + "/.config/nightfalllx/shodan.key",
+				home + "/.nightfalllx_shodan",
+			}
+			for _, cp := range configPaths {
+				if data, err := os.ReadFile(cp); err == nil {
+					key := strings.TrimSpace(string(data))
+					if key != "" {
+						apiKey = key
+						break
+					}
+				}
+			}
+		}
 	}
 	return &ShodanClient{
 		APIKey: strings.TrimSpace(apiKey),
