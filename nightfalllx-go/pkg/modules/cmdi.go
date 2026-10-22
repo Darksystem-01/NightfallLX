@@ -2,6 +2,7 @@ package modules
 
 import (
 	"fmt"
+	"net"
 	"nightfalllx/pkg/client"
 	"regexp"
 	"strings"
@@ -19,7 +20,7 @@ func (m *CMDiModule) Name() string {
 }
 
 func (m *CMDiModule) Description() string {
-	return "Harmless OS Command Injection verification (safe id/whoami and timing probes)"
+	return "Harmless OS Command Injection verification (safe id/whoami, OAST, and timing probes)"
 }
 
 var (
@@ -47,25 +48,28 @@ func (m *CMDiModule) Run(target *Target, c *client.Client) ([]*Finding, error) {
 	isPost := strings.ToUpper(target.Method) == "POST"
 
 	for _, param := range target.Parameters() {
-		// Output-based check
+		// 1. Output-based check (safe id / whoami)
 		for _, probe := range cmdiProbes {
 			var resp *client.Response
 			var err error
 			if isPost {
-				resp, err = c.Request("POST", target.URL, target.BuildDataWithParam(param, probe.Payload), nil)
+				headers := map[string]string{}
+				if target.IsJSON {
+					headers["Content-Type"] = "application/json"
+				}
+				resp, err = c.Request("POST", target.URL, target.BuildBodyWithParam(param, probe.Payload), headers)
 			} else {
 				resp, err = c.Request("GET", target.BuildURLWithParam(param, probe.Payload), "", nil)
 			}
-			if err != nil || resp.Body == "" {
+			if err != nil || resp == nil || resp.Body == "" {
 				continue
 			}
 
 			if probe.Pattern.MatchString(resp.Body) {
-				findings = append(findings, &Finding{
+				f := &Finding{
 					Module:      m.Name(),
-					Title:       "OS Command Injection (Safe PoC)",
+					Title:       "OS Command Injection (Output Confirmed)",
 					Severity:    SeverityCritical,
-					Confidence:  100,
 					URL:         target.URL,
 					Parameter:   param,
 					Payload:     probe.Payload,
@@ -73,7 +77,9 @@ func (m *CMDiModule) Run(target *Target, c *client.Client) ([]*Finding, error) {
 					Evidence:    fmt.Sprintf("Matched system user pattern in response body: %s", probe.Label),
 					Remediation: "Avoid shell execution with request-controlled inputs. Use safe system APIs without shell invocation.",
 					CWEID:       78,
-				})
+				}
+				f.SetConfidence(ConfidenceConfirmed)
+				findings = append(findings, f)
 				break
 			}
 		}
@@ -82,7 +88,65 @@ func (m *CMDiModule) Run(target *Target, c *client.Client) ([]*Finding, error) {
 			continue
 		}
 
-		// Time-based check (safe 3-second sleep)
+		// 2. Out-of-band (OAST) check (benign curl / wget / nslookup commands only)
+		if target.OAST != nil {
+			probeID := target.OAST.GenerateProbeID()
+			cbURL := target.OAST.CallbackURL(probeID)
+			hostOnly := target.OAST.PublicHost
+			if strings.Contains(hostOnly, ":") {
+				h, _, _ := net.SplitHostPort(hostOnly)
+				if h != "" {
+					hostOnly = h
+				}
+			}
+
+			oastCmds := []string{
+				fmt.Sprintf("; curl -s %s || wget -q -O- %s ;", cbURL, cbURL),
+				fmt.Sprintf("$(curl -s %s || wget -q -O- %s)", cbURL, cbURL),
+				fmt.Sprintf("`curl -s %s || wget -q -O- %s`", cbURL, cbURL),
+				fmt.Sprintf("& nslookup %s.%s &", probeID, hostOnly),
+			}
+
+			for _, p := range oastCmds {
+				var reqErr error
+				if isPost {
+					headers := map[string]string{}
+					if target.IsJSON {
+						headers["Content-Type"] = "application/json"
+					}
+					_, reqErr = c.Request("POST", target.URL, target.BuildBodyWithParam(param, p), headers)
+				} else {
+					_, reqErr = c.Request("GET", target.BuildURLWithParam(param, p), "", nil)
+				}
+				if reqErr != nil {
+					continue
+				}
+
+				if hit, ok := target.OAST.WaitForHit(probeID, 3*time.Second); ok && hit != nil {
+					f := &Finding{
+						Module:      m.Name(),
+						Title:       "Blind OS Command Injection (OAST Callback Confirmed)",
+						Severity:    SeverityCritical,
+						URL:         target.URL,
+						Parameter:   param,
+						Payload:     p,
+						Detail:      fmt.Sprintf("Confirmed arbitrary command execution via benign OAST callback for probe %s.", probeID),
+						Evidence:    fmt.Sprintf("OAST hit from %s at %s (%s %s)", hit.RemoteAddr, hit.Timestamp.Format(time.RFC3339), hit.Method, hit.Path),
+						Remediation: "Avoid shell execution with request-controlled inputs. Use parameterized exec APIs.",
+						CWEID:       78,
+					}
+					f.SetConfidence(ConfidenceConfirmed)
+					findings = append(findings, f)
+					break
+				}
+			}
+		}
+
+		if len(findings) > 0 {
+			continue
+		}
+
+		// 3. Time-based check (safe 3-second sleep)
 		origVal := target.Params[param]
 		if isPost {
 			origVal = target.Data[param]
@@ -95,49 +159,61 @@ func (m *CMDiModule) Run(target *Target, c *client.Client) ([]*Finding, error) {
 		start := time.Now()
 		var baseErr error
 		if isPost {
-			_, baseErr = c.Request("POST", target.URL, target.BuildDataWithParam(param, origVal), nil)
+			headers := map[string]string{}
+			if target.IsJSON {
+				headers["Content-Type"] = "application/json"
+			}
+			_, baseErr = c.Request("POST", target.URL, target.BuildBodyWithParam(param, origVal), headers)
 		} else {
 			_, baseErr = c.Request("GET", target.BuildURLWithParam(param, origVal), "", nil)
 		}
-		if baseErr != nil {
+		baseDuration := time.Since(start)
+
+		if baseErr != nil || baseDuration > 2*time.Second {
 			continue
 		}
-		baseLatency := time.Since(start)
 
-		sleepDelay := 3 * time.Second
-		sleepPayloads := []string{
-			fmt.Sprintf("; sleep %d", 3),
-			fmt.Sprintf("| sleep %d", 3),
-			fmt.Sprintf("&& sleep %d", 3),
+		sleepProbes := []string{
+			"; sleep 3 ;",
+			"| sleep 3",
+			"&& sleep 3",
+			"$(sleep 3)",
+			"`sleep 3`",
 		}
 
-		for _, sPayload := range sleepPayloads {
-			start = time.Now()
-			var sErr error
+		for _, sp := range sleepProbes {
+			probeStart := time.Now()
+			var probeErr error
 			if isPost {
-				_, sErr = c.Request("POST", target.URL, target.BuildDataWithParam(param, sPayload), nil)
+				headers := map[string]string{}
+				if target.IsJSON {
+					headers["Content-Type"] = "application/json"
+				}
+				_, probeErr = c.Request("POST", target.URL, target.BuildBodyWithParam(param, sp), headers)
 			} else {
-				_, sErr = c.Request("GET", target.BuildURLWithParam(param, sPayload), "", nil)
+				_, probeErr = c.Request("GET", target.BuildURLWithParam(param, sp), "", nil)
 			}
-			if sErr != nil {
+			probeDuration := time.Since(probeStart)
+
+			if probeErr != nil {
 				continue
 			}
-			sLatency := time.Since(start)
 
-			if sLatency >= baseLatency+(sleepDelay*8/10) {
-				findings = append(findings, &Finding{
+			if probeDuration >= 2800*time.Millisecond && probeDuration > baseDuration+2*time.Second {
+				f := &Finding{
 					Module:      m.Name(),
-					Title:       "Blind OS Command Injection (Time-based)",
+					Title:       "Blind OS Command Injection (Time-Based)",
 					Severity:    SeverityCritical,
-					Confidence:  90,
 					URL:         target.URL,
 					Parameter:   param,
-					Payload:     sPayload,
-					Detail:      fmt.Sprintf("Confirmed time-based command injection: baseline latency=%v, injection latency=%v.", baseLatency.Round(time.Millisecond), sLatency.Round(time.Millisecond)),
-					Evidence:    fmt.Sprintf("Sleep payload %s delayed response by %v", sPayload, sLatency.Round(time.Millisecond)),
-					Remediation: "Avoid system shell invocation; use parameterized APIs.",
+					Payload:     sp,
+					Detail:      fmt.Sprintf("Response was delayed by %v (baseline: %v) matching 'sleep 3' probe.", probeDuration, baseDuration),
+					Evidence:    fmt.Sprintf("Baseline: %v, Probe elapsed: %v", baseDuration, probeDuration),
+					Remediation: "Avoid shell execution with request-controlled inputs. Use parameterized exec APIs.",
 					CWEID:       78,
-				})
+				}
+				f.SetConfidence(ConfidenceProbable)
+				findings = append(findings, f)
 				break
 			}
 		}
