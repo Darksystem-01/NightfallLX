@@ -1,13 +1,16 @@
 package main
 
 import (
+	"bufio"
 	"flag"
 	"fmt"
 	"net/url"
 	"nightfalllx/pkg/client"
 	"nightfalllx/pkg/detector"
+	"nightfalllx/pkg/discovery"
 	"nightfalllx/pkg/fuzzer"
 	"nightfalllx/pkg/modules"
+	"nightfalllx/pkg/oast"
 	"nightfalllx/pkg/parser"
 	"nightfalllx/pkg/reporters"
 	"nightfalllx/pkg/shodan"
@@ -15,6 +18,7 @@ import (
 	"nightfalllx/pkg/troubleshoot"
 	"nightfalllx/pkg/tui"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -47,44 +51,71 @@ func parseCodes(raw string) map[int]bool {
 
 func main() {
 	var (
-		rawURL         string
-		rawReqFile     string
-		domain         string
-		moduleList     string
-		method         string
-		data           string
-		cookie         string
-		proxy          string
-		insecure       bool
-		isHTTPS        bool
-		output         string
-		wordlist       string
-		threads        int
-		matchCodesRaw  string
-		filterCodeRaw  string
-		matchSizesRaw  string
-		filterSizeRaw  string
-		matchWordsRaw  string
-		filterWordsRaw string
-		matchLinesRaw  string
-		filterLinesRaw string
-		isFuzz         bool
-		isSubdomain    bool
-		autoCalibrate  bool
-		timeoutSec     int
-		isDoctor       bool
-		isTech         bool
-		isShodan       bool
-		shodanKey      string
-		isSiteMap      bool
-		spiderDepth    int
-		spiderMaxURLs  int
-		isInteractive  bool
-		headersFlag    arrayFlags
-		headers2Flag   arrayFlags
-		cookie2        string
-		scope          string
-		scopeOff       bool
+		rawURL             string
+		rawReqFile         string
+		domain             string
+		moduleList         string
+		method             string
+		data               string
+		cookie             string
+		proxy              string
+		insecure           bool
+		isHTTPS            bool
+		output             string
+		wordlist           string
+		threads            int
+		matchCodesRaw      string
+		filterCodeRaw      string
+		matchSizesRaw      string
+		filterSizeRaw      string
+		matchWordsRaw      string
+		filterWordsRaw     string
+		matchLinesRaw      string
+		filterLinesRaw     string
+		isFuzz             bool
+		isSubdomain        bool
+		autoCalibrate      bool
+		timeoutSec         int
+		isDoctor           bool
+		isTech             bool
+		isShodan           bool
+		shodanKey          string
+		isSiteMap          bool
+		spiderDepth        int
+		spiderMaxURLs      int
+		isInteractive      bool
+		headersFlag        arrayFlags
+		headers2Flag       arrayFlags
+		cookie2            string
+		scope              string
+		scopeOff           bool
+
+		// OAST Out-of-band listener
+		oastListen         string
+		oastHost           string
+		oastWaitSec        int
+
+		// Time-based SQLi
+		sqliDelaySec       int
+
+		// Parameter discovery
+		discoverParams     bool
+
+		// Authenticated scanning
+		loginURL           string
+		loginData          string
+		loginUser          string
+		loginPass          string
+		loginSuccessRegex  string
+		loginSuccessStatus int
+		logoutRegex        string
+		bearerToken        string
+		refreshURL         string
+		refreshJSONPath    string
+
+		// JSON & Rate Limiting
+		isJSON             bool
+		rateLimit          int
 	)
 
 	// Target & Input
@@ -100,6 +131,33 @@ func main() {
 	flag.StringVar(&cookie2, "b2", "", "Secondary cookie value for IDOR / authorization testing")
 	flag.Var(&headers2Flag, "H2", "Secondary custom header (repeatable, e.g. -H2 'Authorization: Bearer user2')")
 
+	// Out-Of-Band (OAST) Listener
+	flag.StringVar(&oastListen, "oast-listen", "", "Local IP:Port to listen for OAST HTTP callbacks (e.g. 0.0.0.0:8888 or 127.0.0.1:8888)")
+	flag.StringVar(&oastHost, "oast-host", "", "Public IP/hostname for OAST callback payloads (e.g. 10.10.14.x or tunnel.domain.com)")
+	flag.IntVar(&oastWaitSec, "oast-wait", 10, "Seconds to wait for OAST interaction callback (default: 10)")
+
+	// SQLi Time Delay
+	flag.IntVar(&sqliDelaySec, "sqli-delay", 3, "Delay in seconds for time-based SQL injection tests (default: 3)")
+
+	// Parameter Discovery (Arjun-style)
+	flag.BoolVar(&discoverParams, "discover-params", false, "Discover hidden HTTP parameters via response bisection (-w required)")
+
+	// Authenticated Scanning
+	flag.StringVar(&loginURL, "login-url", "", "URL to submit authentication credentials for authenticated scanning")
+	flag.StringVar(&loginData, "login-data", "", "Login body payload template with {{user}} and {{pass}} placeholders (form or JSON)")
+	flag.StringVar(&loginUser, "login-user", "", "Username for login (or env var LOGIN_USER)")
+	flag.StringVar(&loginPass, "login-pass", "", "Password for login (or env var LOGIN_PASS)")
+	flag.StringVar(&loginSuccessRegex, "login-success-regex", "", "Regex to confirm successful login response")
+	flag.IntVar(&loginSuccessStatus, "login-success-status", 0, "Expected HTTP status code for successful login (e.g. 200 or 302)")
+	flag.StringVar(&logoutRegex, "logout-regex", "", "Regex indicating session logout to trigger automatic re-login")
+	flag.StringVar(&bearerToken, "bearer", "", "Bearer token for Authorization header")
+	flag.StringVar(&refreshURL, "refresh-url", "", "URL to refresh expired authentication tokens")
+	flag.StringVar(&refreshJSONPath, "refresh-json-path", "access_token", "JSON path to extract new token from refresh response")
+
+	// Rate Limiting & JSON Mode
+	flag.BoolVar(&isJSON, "json", false, "Force treat request body as application/json")
+	flag.IntVar(&rateLimit, "rate", 0, "Rate limit in requests per second (default: 0 = unlimited)")
+
 	// Interactive Mouse Dashboard, Tech Detector, Sitemap & Shodan
 	flag.BoolVar(&isInteractive, "i", false, "Launch interactive mouse-controllable TUI dashboard")
 	flag.BoolVar(&isInteractive, "ui", false, "Alias for -i (Interactive Mouse TUI)")
@@ -111,14 +169,14 @@ func main() {
 	flag.IntVar(&spiderDepth, "depth", 3, "Web crawler recursion depth (default: 3)")
 	flag.IntVar(&spiderMaxURLs, "max-urls", 50, "Max URLs to discover during spidering (default: 50)")
 	flag.BoolVar(&isShodan, "shodan", false, "Run Shodan OSINT intelligence reconnaissance on target IP/domain")
-	flag.StringVar(&shodanKey, "shodan-key", "", "Shodan API Key (optional, defaults to built-in or SHODAN_API_KEY env)")
+	flag.StringVar(&shodanKey, "shodan-key", "", "Shodan API Key (optional, defaults to SHODAN_API_KEY env)")
 
 	// Vulnerability Assessment Modules
-	flag.StringVar(&moduleList, "m", "all", "Comma-separated modules: sqli, ssti, lfi, cmdi, xss, cors, redirect, ssrf, jwt, waf, idor, csrf, xxe, nosqli, upload, headers, exposure, hostheader, crlf (or 'all')")
+	flag.StringVar(&moduleList, "m", "all", "Comma-separated modules: sqli, ssti, lfi, cmdi, xss, cors, redirect, ssrf, jwt, waf, idor, csrf, xxe, nosqli, upload (opt-in), headers, exposure, hostheader, crlf, graphql, protopollution, massassign, deserialize (or 'all')")
 
 	// HTTP Options
 	flag.StringVar(&method, "X", "GET", "HTTP Method: GET, POST, PUT, etc.")
-	flag.StringVar(&data, "d", "", "POST data body (e.g. 'user=FUZZ&pass=123')")
+	flag.StringVar(&data, "d", "", "POST data body (e.g. 'user=FUZZ&pass=123' or '{\"id\":1}')")
 	flag.Var(&headersFlag, "H", "Custom HTTP Header (can repeat, e.g. -H 'Host: FUZZ.target.lab')")
 	flag.StringVar(&cookie, "b", "", "Cookie header value")
 	flag.StringVar(&proxy, "p", "", "HTTP proxy URL (e.g. http://127.0.0.1:8080 for Burp Suite)")
@@ -158,59 +216,24 @@ func main() {
   ███╗   ██╗██╗ ██████╗ ██╗  ██╗████████╗███████╗ █████╗ ██╗     ██╗     ██╗   ██╗
   ████╗  ██║██║██╔════╝ ██║  ██║╚══██╔══╝██╔════╝██╔══██╗██║     ██║     ╚██╗ ██╔╝
   ██╔██╗ ██║██║██║  ███╗███████║   ██║   █████╗  ███████║██║     ██║      ╚████╔╝ 
-  ██║╚██╗██║██║██║   ██║██╔══██║   ██║   ██╔══╝  ██╔══██║██║     ██║      ██╔═██╗ 
-  ██║ ╚████║██║╚██████╔╝██║  ██║   ██║   ██║     ██║  ██║███████╗███████╗██╔╝ ██╗
-  ╚═╝  ╚═══╝╚═╝ ╚═════╝ ╚═╝  ╚═╝   ╚═╝   ╚═╝     ╚═╝  ╚═╝╚══════╝╚══════╝╚═╝  ╚═╝
-  :: Next-Gen Web Assessment & Recon Suite :: [ Go Edition v2.0 ] ::
-
-USAGE:
-  nightfalllx -u <target-url> [options]
-  nightfalllx -tech -u <target-url>
-  nightfalllx -map -u <target-url>
-  nightfalllx -shodan -u <target-url>
-  nightfalllx -r <burp-request.txt> [options]
-  nightfalllx -u "http://target.lab/FUZZ" -w wordlist.txt
-  nightfalllx -i   (Launch Interactive Mouse-Controllable Dashboard)
-
-TARGET SPECIFICATION:
-  -u string        Target URL (e.g. http://10.129.x.x/index.php?id=1 or .../FUZZ)
-  -r string        Burp Suite raw HTTP request file (e.g. -r request.txt)
-  -domain string   Target domain for Subdomain & VHost discovery
-  -https, -ssl     Force HTTPS scheme
-
-ASSESSMENT, OSINT & RECON:
-  -tech            Deep technology & exact version discovery (Wappalyzer-grade)
-  -map, -spider    Spider target architecture & generate full sitemap
-  -depth int       Crawler recursion depth (default: 3)
-  -max-urls int    Max URLs to discover during spidering (default: 50)
-  -shodan          Run Shodan OSINT reconnaissance (subdomains, ports, CVEs)
-  -shodan-key str  Shodan API Key (optional, defaults to built-in key)
-  -m string        Modules to run: sqli, ssti, lfi, cmdi, xss, cors, redirect, ssrf, jwt, waf (default: "all")
-
-HIGH-SPEED FUZZING & VHOSTS (ffuf-style):
-  -w string        Wordlist path for directory, parameter, or VHost fuzzing
-  -t int           Concurrent Goroutines (default: 40)
-  -sub, -subdomain Enable Subdomain & Virtual Host discovery mode
-  -ac              Auto-calibrate baseline wildcard responses (default: true)
-  -mc, -fc string  Match / Filter HTTP status codes (e.g. -mc 200,302 -fc 404)
-  -ms, -fs string  Match / Filter response sizes in bytes
-  -mw, -fw string  Match / Filter response word counts
-  -ml, -fl string  Match / Filter response line counts
-
-INTERACTIVE & DIAGNOSTICS:
-  -i, -ui, -tui    Launch interactive mouse-controllable TUI dashboard
-  -doctor          Run connectivity, DNS, TLS, and proxy diagnostics
-  -version, -V     Show program version
-
-HTTP & PROXY CONFIGURATION:
-  -X string        HTTP Method: GET, POST, PUT, etc. (default: "GET")
-  -d string        POST request data body
-  -H value         Custom HTTP header (repeatable, e.g. -H "Authorization: Bearer ...")
-  -b string        Cookie string
-  -p string        Proxy URL (e.g. http://127.0.0.1:8080)
-  -k               Insecure / Ignore TLS verification (default: true)
-  -timeout int     Request timeout in seconds (default: 15)
-  -o string        Output report filename prefix (default: "lab_report")`)
+  ██║╚██╗██║██║██║   ██║██╔══██║   ██║   ██╔══╝  ██╔══██║██║     ██║       ██╔═██╗ 
+  ██║ ╚████║██║╚██████╔╝██║  ██║   ██║   ██║     ██║  ██║███████╗███████╗ ██╔╝ ██╗
+  ╚═╝  ╚═══╝╚═╝ ╚═════╝ ╚═╝  ╚═╝   ╚═╝   ╚═╝     ╚═╝  ╚═╝╚══════╝╚══════╝ ╚═╝  ╚═╝
+              NightfallLX (Go Edition v2.0) - Offensive Assessment Engine`)
+		fmt.Println("\nUsage:")
+		fmt.Println("  nightfalllx -u <URL> [options]")
+		fmt.Println("  nightfalllx -r <request.txt> [options]")
+		fmt.Println("  nightfalllx -u <URL>/FUZZ -w <wordlist.txt> [fuzzing options]")
+		fmt.Println("  nightfalllx -domain <target.lab> -w <subdomains.txt> [subdomain options]")
+		fmt.Println("\nExamples:")
+		fmt.Println("  nightfalllx -u http://target.lab/?id=1 -m sqli,lfi -scope target.lab")
+		fmt.Println("  nightfalllx -u http://target.lab/api/user -d '{\"id\":1}' -json -m sqli,idor")
+		fmt.Println("  nightfalllx -u http://target.lab/ -discover-params -w /path/to/params.txt")
+		fmt.Println("  nightfalllx -u http://target.lab/ -oast-listen 0.0.0.0:8888 -oast-host 10.10.14.5:8888 -m ssrf,cmdi,xxe")
+		fmt.Println("  nightfalllx -u http://target.lab/admin -login-url http://target.lab/login -login-data 'user={{user}}&pass={{pass}}' -login-user admin -login-pass secret")
+		fmt.Println()
+		flag.PrintDefaults()
+		os.Exit(0)
 	}
 
 	flag.Parse()
@@ -220,138 +243,117 @@ HTTP & PROXY CONFIGURATION:
 		return
 	}
 
-	// 0. Interactive Mouse-Controllable TUI Mode (only on explicit -i / -ui / -tui flag)
-	if isInteractive {
-		dash := tui.NewInteractiveTUI(rawURL)
-		dash.Proxy = proxy
-		dash.Wordlist = wordlist
-		dash.RunLoop()
-		return
-	}
+	// 0. Authorization Warning Notice
+	fmt.Println("\033[33m⚠️  Authorization Notice: Ensure you have explicit authorization to test target host(s).\033[0m")
 
-	// If no arguments or target given, show standard usage
-	if len(os.Args) == 1 || (rawURL == "" && rawReqFile == "" && domain == "" && !isDoctor) {
-		flag.Usage()
-		return
-	}
-
-	// 1. Troubleshooting / Doctor Mode
-	if isDoctor {
-		doc := troubleshoot.NewDoctor(rawURL, proxy, wordlist)
-		checks := doc.RunAll()
-		exitCode := troubleshoot.PrintDoctorReport(checks)
-		os.Exit(exitCode)
-	}
-
-	// 2. Parse Custom Headers & Secondary Identity
-	parsedHeaders := make(map[string]string)
-	for _, h := range headersFlag {
-		if parts := strings.SplitN(h, ":", 2); len(parts) == 2 {
-			parsedHeaders[strings.TrimSpace(parts[0])] = strings.TrimSpace(parts[1])
+	// 1. Process Scope Guard List
+	var scopeHosts []string
+	if scope != "" {
+		if fileBytes, err := os.ReadFile(scope); err == nil {
+			lines := strings.Split(string(fileBytes), "\n")
+			for _, l := range lines {
+				l = strings.TrimSpace(l)
+				if l != "" && !strings.HasPrefix(l, "#") {
+					scopeHosts = append(scopeHosts, l)
+				}
+			}
+		} else {
+			for _, part := range strings.Split(scope, ",") {
+				part = strings.TrimSpace(part)
+				if part != "" {
+					scopeHosts = append(scopeHosts, part)
+				}
+			}
 		}
 	}
 
+	// 2. Doctor Diagnostics Mode
+	if isDoctor {
+		diagTarget := rawURL
+		if diagTarget == "" && rawReqFile != "" {
+			diagTarget = "Burp Request: " + rawReqFile
+		}
+		doc := troubleshoot.NewDoctor(diagTarget, proxy, wordlist)
+		checks := doc.RunAll()
+		code := troubleshoot.PrintDoctorReport(checks)
+		os.Exit(code)
+	}
+
+	// 3. Interactive Mouse Dashboard Mode
+	if isInteractive {
+		dashboardURL := rawURL
+		if dashboardURL == "" {
+			dashboardURL = "http://127.0.0.1:8080"
+		}
+		dashboard := tui.NewInteractiveTUI(dashboardURL)
+		dashboard.Proxy = proxy
+		dashboard.Threads = threads
+		dashboard.Wordlist = wordlist
+		dashboard.RunLoop()
+		return
+	}
+
+	// 4. Header Parsing
+	parsedHeaders := make(map[string]string)
+	for _, h := range headersFlag {
+		parts := strings.SplitN(h, ":", 2)
+		if len(parts) == 2 {
+			parsedHeaders[strings.TrimSpace(parts[0])] = strings.TrimSpace(parts[1])
+		}
+	}
 	parsedHeaders2 := make(map[string]string)
 	for _, h := range headers2Flag {
-		if parts := strings.SplitN(h, ":", 2); len(parts) == 2 {
+		parts := strings.SplitN(h, ":", 2)
+		if len(parts) == 2 {
 			parsedHeaders2[strings.TrimSpace(parts[0])] = strings.TrimSpace(parts[1])
 		}
 	}
 
-	// Scope parsing
-	var scopeHosts []string
-	if scope != "" {
-		if fileBytes, err := os.ReadFile(scope); err == nil {
-			for _, line := range strings.Split(string(fileBytes), "\n") {
-				line = strings.TrimSpace(line)
-				if line != "" && !strings.HasPrefix(line, "#") {
-					scopeHosts = append(scopeHosts, line)
-				}
-			}
-		} else {
-			for _, s := range strings.Split(scope, ",") {
-				if s = strings.TrimSpace(s); s != "" {
-					scopeHosts = append(scopeHosts, s)
-				}
-			}
-		}
-	}
+	// 5. Raw Request Parser Mode (-r)
+	var queryParams = make(map[string]string)
+	var postData = make(map[string]string)
+	var urlWithoutQuery string
 
-	fmt.Println("\033[1;33m⚠️  Authorization Notice: Ensure you have explicit authorization to test target host(s).\033[0m")
-
-	// 3. Handle Burp Suite Raw Request (-r)
-	var parsedRawReq *parser.RawRequest
 	if rawReqFile != "" {
-		var err error
-		parsedRawReq, err = parser.ParseRawRequestFile(rawReqFile, isHTTPS)
+		rawBytes, err := os.ReadFile(rawReqFile)
 		if err != nil {
-			fmt.Printf("\033[31m[!] Error parsing raw request file %s: %v\033[0m\n", rawReqFile, err)
+			fmt.Printf("\033[31m[!] Error reading raw request file: %v\033[0m\n", err)
+			os.Exit(1)
+		}
+		rawParsed, err := parser.ParseRawRequest(rawBytes, isHTTPS)
+		if err != nil {
+			fmt.Printf("\033[31m[!] Error parsing raw request: %v\033[0m\n", err)
 			os.Exit(1)
 		}
 
-		if rawURL == "" {
-			rawURL = parsedRawReq.FullURL
+		rawURL = rawParsed.FullURL
+		method = rawParsed.Method
+		data = rawParsed.Body
+		if cookie == "" && rawParsed.Cookie != "" {
+			cookie = rawParsed.Cookie
 		}
-		if method == "GET" && parsedRawReq.Method != "" {
-			method = parsedRawReq.Method
-		}
-		if data == "" && parsedRawReq.Body != "" {
-			data = parsedRawReq.Body
-		}
-		if cookie == "" && parsedRawReq.Cookie != "" {
-			cookie = parsedRawReq.Cookie
-		}
-		for k, v := range parsedRawReq.Headers {
+		for k, v := range rawParsed.Headers {
 			if _, exists := parsedHeaders[k]; !exists {
 				parsedHeaders[k] = v
 			}
 		}
-		if parsedRawReq.HasFuzzPoint {
-			isFuzz = true
+		for k, v := range rawParsed.QueryParams {
+			queryParams[k] = v
 		}
-		fmt.Printf("\033[32m[+] Loaded Burp Suite Raw Request from:\033[0m %s [%s %s]\n", rawReqFile, method, rawURL)
-	}
+		for k, v := range rawParsed.PostParams {
+			postData[k] = v
+		}
 
-	// 4. Subdomain Discovery Mode setup
-	if isSubdomain {
-		isFuzz = true
-		if rawURL == "" && domain != "" {
-			scheme := "http"
-			if isHTTPS {
-				scheme = "https"
-			}
-			rawURL = fmt.Sprintf("%s://%s", scheme, domain)
-		}
-		if domain != "" && rawURL != "" {
-			// If target is an IP or base URL, set Host: FUZZ.<domain>
-			parsedHeaders["Host"] = fmt.Sprintf("FUZZ.%s", domain)
-		} else if rawURL != "" {
-			// Extract host from rawURL and configure VHost fuzzing if not present
-			cleanHost := strings.TrimPrefix(strings.TrimPrefix(rawURL, "http://"), "https://")
-			cleanHost = strings.TrimSuffix(cleanHost, "/")
-			if qIdx := strings.Index(cleanHost, "/"); qIdx != -1 {
-				cleanHost = cleanHost[:qIdx]
-			}
-			if _, hasHost := parsedHeaders["Host"]; !hasHost && !strings.Contains(rawURL, "FUZZ") {
-				parsedHeaders["Host"] = fmt.Sprintf("FUZZ.%s", cleanHost)
-			}
+		u, err := url.Parse(rawURL)
+		if err == nil {
+			urlWithoutQuery = fmt.Sprintf("%s://%s%s", u.Scheme, u.Host, u.Path)
 		}
 	}
 
-	// 5. Validation Check
-	if rawURL == "" {
-		fmt.Println("\033[1;36mNightfallLX (Go Edition)\033[0m - High-Performance Web Assessment & Fuzzer")
-		fmt.Println("Usage:")
-		fmt.Println("  nightfalllx -i                                               # Launch interactive Mouse-controlled Dashboard")
-		fmt.Println("  nightfalllx --tech -u http://target.lab                      # Wappalyzer-grade technology & version detector")
-		fmt.Println("  nightfalllx -r request.txt                                   # Scan Burp Suite request")
-		fmt.Println("  nightfalllx -sub -u http://10.129.x.x -domain target.htb     # ffuf-style VHost/Subdomain finder")
-		fmt.Println("  nightfalllx -u http://10.129.x.x/FUZZ -w wordlist.txt -t 50  # Directory/Param fuzzer")
-		fmt.Println("  nightfalllx -u http://target.lab/?id=1 -m all -p http://127.0.0.1:8080")
-		fmt.Println("  nightfalllx --doctor -u http://target.lab/ -p http://127.0.0.1:8080")
-		fmt.Println()
-		flag.PrintDefaults()
-		os.Exit(1)
+	// Validation
+	if rawURL == "" && domain == "" {
+		flag.Usage()
+		return
 	}
 
 	if !strings.HasPrefix(rawURL, "http://") && !strings.HasPrefix(rawURL, "https://") {
@@ -427,75 +429,73 @@ HTTP & PROXY CONFIGURATION:
 	}
 
 	if isFuzz || hasFuzzKeyword || (wordlist != "" && len(parsedHeaders["Host"]) > 0 && strings.Contains(parsedHeaders["Host"], "FUZZ")) {
+		if cookie != "" && parsedHeaders["Cookie"] == "" {
+			parsedHeaders["Cookie"] = cookie
+		}
+		if isSubdomain && domain != "" && parsedHeaders["Host"] == "" {
+			parsedHeaders["Host"] = "FUZZ." + domain
+		}
 		fuzzCfg := &fuzzer.Config{
-			URL:           rawURL,
-			WordlistPath:  wordlist,
 			Method:        strings.ToUpper(method),
+			URL:           rawURL,
 			Data:          data,
 			Headers:       parsedHeaders,
-			Threads:       threads,
-			Timeout:       time.Duration(timeoutSec) * time.Second,
 			Proxy:         proxy,
 			Insecure:      insecure,
+			Timeout:       time.Duration(timeoutSec) * time.Second,
+			Threads:       threads,
+			WordlistPath:  wordlist,
 			AutoCalibrate: autoCalibrate,
-			IsSubdomain:   isSubdomain,
+			MatchCodes:    parseCodes(matchCodesRaw),
 			FilterCodes:   parseCodes(filterCodeRaw),
-			FilterSizes:   parseCodes(filterSizeRaw),
-			FilterWords:   parseCodes(filterWordsRaw),
-			FilterLines:   parseCodes(filterLinesRaw),
 			MatchSizes:    parseCodes(matchSizesRaw),
+			FilterSizes:   parseCodes(filterSizeRaw),
 			MatchWords:    parseCodes(matchWordsRaw),
+			FilterWords:   parseCodes(filterWordsRaw),
 			MatchLines:    parseCodes(matchLinesRaw),
+			FilterLines:   parseCodes(filterLinesRaw),
+			IsSubdomain:   isSubdomain,
 		}
-		if matchCodesRaw != "" {
-			fuzzCfg.MatchCodes = parseCodes(matchCodesRaw)
+
+		if len(fuzzCfg.MatchCodes) == 0 && len(fuzzCfg.FilterCodes) == 0 {
+			fuzzCfg.FilterCodes = map[int]bool{404: true}
 		}
 
 		f := fuzzer.NewFuzzer(fuzzCfg)
-		_, err := f.Run()
-		if err != nil {
+		if _, err := f.Run(); err != nil {
 			fmt.Printf("\033[31m[!] Fuzzer error: %v\033[0m\n", err)
 			os.Exit(1)
 		}
 		return
 	}
 
-	// 8. Vulnerability Assessment Mode
-	parsedURL, err := url.Parse(rawURL)
-	if err != nil {
-		fmt.Printf("\033[31m[!] Invalid URL: %v\033[0m\n", err)
-		os.Exit(1)
-	}
-
-	urlWithoutQuery := fmt.Sprintf("%s://%s%s", parsedURL.Scheme, parsedURL.Host, parsedURL.Path)
-	queryParams := make(map[string]string)
-	for k, v := range parsedURL.Query() {
-		if len(v) > 0 {
-			queryParams[k] = v[0]
+	// 8. Vulnerability Assessment Engine
+	if urlWithoutQuery == "" {
+		u, err := url.Parse(rawURL)
+		if err != nil {
+			fmt.Printf("\033[31m[!] Invalid target URL: %v\033[0m\n", err)
+			os.Exit(1)
+		}
+		urlWithoutQuery = fmt.Sprintf("%s://%s%s", u.Scheme, u.Host, u.Path)
+		for k, v := range u.Query() {
+			if len(v) > 0 {
+				queryParams[k] = v[0]
+			}
 		}
 	}
 
-	postData := make(map[string]string)
-	if data != "" {
+	trimmedData := strings.TrimSpace(data)
+	if !isJSON && (strings.HasPrefix(trimmedData, "{") || strings.HasPrefix(trimmedData, "[")) {
+		isJSON = true
+	}
+
+	if data != "" && len(postData) == 0 && !isJSON {
 		vals, err := url.ParseQuery(data)
 		if err == nil {
 			for k, v := range vals {
 				if len(v) > 0 {
 					postData[k] = v[0]
 				}
-			}
-		}
-	}
-
-	if parsedRawReq != nil {
-		for k, v := range parsedRawReq.QueryParams {
-			if _, exists := queryParams[k]; !exists {
-				queryParams[k] = v
-			}
-		}
-		for k, v := range parsedRawReq.PostParams {
-			if _, exists := postData[k]; !exists {
-				postData[k] = v
 			}
 		}
 	}
@@ -510,9 +510,113 @@ HTTP & PROXY CONFIGURATION:
 		Headers2: parsedHeaders2,
 	}
 
+	if isJSON {
+		target.IsJSON = true
+		if trimmedData != "" {
+			_ = target.ParseJSONBody(trimmedData)
+		}
+		if _, hasCT := parsedHeaders["Content-Type"]; !hasCT {
+			parsedHeaders["Content-Type"] = "application/json"
+		}
+	}
+
 	httpClient := client.NewClient(proxy, time.Duration(timeoutSec)*time.Second, insecure, cookie, parsedHeaders)
 	httpClient.ScopeHosts = scopeHosts
 	httpClient.ScopeOff = scopeOff
+	if rateLimit > 0 {
+		httpClient.SetRateLimit(rateLimit)
+	}
+
+	// Environment variable fallback for login credentials
+	if loginUser == "" {
+		loginUser = os.Getenv("LOGIN_USER")
+	}
+	if loginPass == "" {
+		loginPass = os.Getenv("LOGIN_PASS")
+	}
+
+	// Authenticated Scanning Setup
+	if loginURL != "" {
+		httpClient.LoginURL = loginURL
+		httpClient.LoginData = loginData
+		httpClient.LoginUser = loginUser
+		httpClient.LoginPass = loginPass
+		httpClient.LoginSuccessStatus = loginSuccessStatus
+		if loginSuccessRegex != "" {
+			httpClient.LoginSuccessRegex = regexp.MustCompile(loginSuccessRegex)
+		}
+		if logoutRegex != "" {
+			httpClient.LogoutRegex = regexp.MustCompile(logoutRegex)
+		}
+		httpClient.BearerToken = bearerToken
+		httpClient.RefreshURL = refreshURL
+		httpClient.RefreshJSONPath = refreshJSONPath
+
+		fmt.Println("\033[36m[*] Authenticating session on login endpoint...\033[0m")
+		if err := httpClient.PerformLogin(); err != nil {
+			fmt.Printf("\033[31m[!] Login failed: %v\033[0m\n", err)
+		} else {
+			fmt.Println("\033[32m[+] Authentication succeeded! Session cookies cached in jar.\033[0m")
+		}
+	}
+
+	// OAST Listener Initialization
+	if oastListen != "" || oastHost != "" {
+		if oastListen == "" {
+			oastListen = "0.0.0.0:8888"
+		}
+		oastServer := oast.NewServer(oastListen, oastHost, time.Duration(oastWaitSec)*time.Second)
+		if err := oastServer.Start(); err != nil {
+			fmt.Printf("\033[31m[!] Warning: Failed to start OAST listener on %s: %v\033[0m\n", oastListen, err)
+		} else {
+			defer oastServer.Close()
+			target.OAST = oastServer
+			fmt.Printf("\033[32m[+] Built-in OAST Callback Server started on %s (Public: %s)\033[0m\n", oastServer.ListenAddr, oastServer.PublicHost)
+		}
+	}
+
+	// Parameter Discovery (Arjun-style)
+	if discoverParams {
+		if wordlist == "" {
+			fmt.Println("\033[33m[!] -discover-params specified without -w wordlist. Using built-in common parameter list...\033[0m")
+		}
+		var words []string
+		if wordlist != "" {
+			if fBytes, err := os.ReadFile(wordlist); err == nil {
+				sc := bufio.NewScanner(strings.NewReader(string(fBytes)))
+				for sc.Scan() {
+					txt := strings.TrimSpace(sc.Text())
+					if txt != "" && !strings.HasPrefix(txt, "#") {
+						words = append(words, txt)
+					}
+				}
+			}
+		}
+		if len(words) == 0 {
+			words = []string{
+				"id", "user", "username", "email", "pass", "password", "token", "key", "admin", "debug",
+				"file", "path", "url", "redirect", "dest", "view", "show", "cat", "page", "role", "cmd",
+				"exec", "action", "query", "search", "lang", "type", "filter", "sort", "data", "callback",
+			}
+		}
+
+		fmt.Printf("\033[36m[*] Discovering hidden parameters using %d candidates...\033[0m\n", len(words))
+		pd := discovery.NewParameterDiscovery(50)
+		foundParams, err := pd.Discover(target, httpClient, words)
+		if err != nil {
+			fmt.Printf("\033[31m[!] Parameter discovery error: %v\033[0m\n", err)
+		} else if len(foundParams) > 0 {
+			fmt.Printf("\033[1;32m[+] Discovered %d hidden parameter(s): %v\033[0m\n", len(foundParams), foundParams)
+			for _, p := range foundParams {
+				if target.Params == nil {
+					target.Params = make(map[string]string)
+				}
+				target.Params[p] = "1"
+			}
+		} else {
+			fmt.Println("\033[33m[-] No anomalous parameters discovered.\033[0m")
+		}
+	}
 
 	// Step 1: Deep Technology & Version Fingerprint
 	det := detector.NewTechDetector()
@@ -521,9 +625,12 @@ HTTP & PROXY CONFIGURATION:
 		detector.PrintReport(techRep)
 	}
 
-	fmt.Printf("\n\033[1;36mNightfallLX (Go Edition)\033[0m - Web Assessment Framework\n")
+	fmt.Printf("\n\033[1;36mNightfallLX (Go Edition v2.0)\033[0m - Web Assessment Framework\n")
 	fmt.Printf("Target:     \033[1m%s\033[0m [%s]\n", target.URL, target.Method)
 	fmt.Printf("Parameters: %v\n", target.Parameters())
+	if target.IsJSON {
+		fmt.Printf("Payload:    \033[35mJSON Body (%d leaves)\033[0m\n", len(target.JSONLeaves))
+	}
 	if proxy != "" {
 		fmt.Printf("Proxy:      \033[33m%s\033[0m\n", proxy)
 	}
@@ -531,29 +638,38 @@ HTTP & PROXY CONFIGURATION:
 
 	if len(target.Parameters()) == 0 {
 		fmt.Println("\033[33m[!] Notice: No query or body parameters detected in target URL.\033[0m")
-		fmt.Println("    Running passive / host modules (WAF, Headers, Exposure, CORS). To test injection, add parameters: -u 'http://site/?id=1' or -d 'param=1'")
+		fmt.Println("    Running passive / host modules. To test injection, add parameters: -u 'http://site/?id=1' or -d 'param=1'")
+	}
+
+	sqliModule := modules.NewSQLiModule()
+	if sqliDelaySec > 0 {
+		sqliModule.DefaultDelay = sqliDelaySec
 	}
 
 	availableModules := map[string]modules.Module{
-		"sqli":       modules.NewSQLiModule(),
-		"ssti":       modules.NewSSTIModule(),
-		"lfi":        modules.NewLFIModule(),
-		"cmdi":       modules.NewCMDiModule(),
-		"xss":        modules.NewXSSModule(),
-		"cors":       modules.NewCORSModule(),
-		"redirect":   modules.NewRedirectModule(),
-		"ssrf":       modules.NewSSRFModule(),
-		"jwt":        modules.NewJWTModule(),
-		"waf":        modules.NewWAFModule(),
-		"idor":       modules.NewIDORModule(),
-		"csrf":       modules.NewCSRFModule(),
-		"xxe":        modules.NewXXEModule(),
-		"nosqli":     modules.NewNoSQLiModule(),
-		"upload":     modules.NewUploadModule(),
-		"headers":    modules.NewHeadersModule(),
-		"exposure":   modules.NewExposureModule(),
-		"hostheader": modules.NewHostHeaderModule(),
-		"crlf":       modules.NewCRLFModule(),
+		"sqli":           sqliModule,
+		"ssti":           modules.NewSSTIModule(),
+		"lfi":            modules.NewLFIModule(),
+		"cmdi":           modules.NewCMDiModule(),
+		"xss":            modules.NewXSSModule(),
+		"cors":           modules.NewCORSModule(),
+		"redirect":       modules.NewRedirectModule(),
+		"ssrf":           modules.NewSSRFModule(),
+		"jwt":            modules.NewJWTModule(),
+		"waf":            modules.NewWAFModule(),
+		"idor":           modules.NewIDORModule(),
+		"csrf":           modules.NewCSRFModule(),
+		"xxe":            modules.NewXXEModule(),
+		"nosqli":         modules.NewNoSQLiModule(),
+		"upload":         modules.NewUploadModule(), // Opt-in only
+		"headers":        modules.NewHeadersModule(),
+		"exposure":       modules.NewExposureModule(),
+		"hostheader":     modules.NewHostHeaderModule(),
+		"crlf":           modules.NewCRLFModule(),
+		"graphql":        modules.NewGraphQLModule(),
+		"protopollution": modules.NewProtoPollutionModule(),
+		"massassign":     modules.NewMassAssignModule(),
+		"deserialize":    modules.NewDeserializeModule(),
 	}
 
 	var activeModules []modules.Module
@@ -561,7 +677,8 @@ HTTP & PROXY CONFIGURATION:
 		order := []string{
 			"waf", "headers", "exposure", "sqli", "ssti", "lfi", "cmdi",
 			"xss", "cors", "redirect", "ssrf", "jwt", "idor", "csrf",
-			"xxe", "nosqli", "upload", "hostheader", "crlf",
+			"xxe", "nosqli", "hostheader", "crlf", "graphql",
+			"protopollution", "massassign", "deserialize",
 		}
 		for _, name := range order {
 			activeModules = append(activeModules, availableModules[name])
@@ -577,7 +694,7 @@ HTTP & PROXY CONFIGURATION:
 
 	var allFindings []*modules.Finding
 	for _, mod := range activeModules {
-		fmt.Printf("\033[36m[*] Running module: \033[1m%-10s\033[0m (%s) ...\n", mod.Name(), mod.Description())
+		fmt.Printf("\033[36m[*] Running module: \033[1m%-14s\033[0m (%s) ...\n", mod.Name(), mod.Description())
 		findings, err := mod.Run(target, httpClient)
 		if err != nil {
 			fmt.Printf("    \033[31m[!] Error running %s: %v\033[0m\n", mod.Name(), err)
@@ -585,10 +702,14 @@ HTTP & PROXY CONFIGURATION:
 		}
 		for _, f := range findings {
 			status := "\033[1;32m[CONFIRMED]\033[0m"
-			if f.Severity == modules.SeverityInfo {
+			if f.ConfidenceLevel == modules.ConfidencePossible {
+				status = "\033[1;33m[POSSIBLE]\033[0m"
+			} else if f.ConfidenceLevel == modules.ConfidenceProbable {
+				status = "\033[1;34m[PROBABLE]\033[0m"
+			} else if f.Severity == modules.SeverityInfo {
 				status = "\033[1;36m[INFO]\033[0m"
 			}
-			fmt.Printf("    %s \033[1m%s\033[0m (param=%s, confidence=%d%%)\n", status, f.Title, f.Parameter, f.Confidence)
+			fmt.Printf("    %s \033[1m%s\033[0m (param=%s, confidence=%s)\n", status, f.Title, f.Parameter, f.ConfidenceLevel)
 		}
 		allFindings = append(allFindings, findings...)
 	}
@@ -599,7 +720,7 @@ HTTP & PROXY CONFIGURATION:
 	reporters.WriteJSONReport(target, allFindings, jsonFile)
 
 	fmt.Println("\n" + strings.Repeat("=", 60))
-	fmt.Printf("\033[1mScan Finished!\033[0m Confirmed Vulnerabilities: \033[1;32m%d\033[0m\n", len(allFindings))
+	fmt.Printf("\033[1mScan Finished!\033[0m Total Findings: \033[1;32m%d\033[0m\n", len(allFindings))
 	fmt.Printf("Reports saved to:\n  Markdown: \033[32m%s\033[0m\n  JSON:     \033[32m%s\033[0m\n", mdFile, jsonFile)
 	fmt.Println(strings.Repeat("=", 60))
 }
