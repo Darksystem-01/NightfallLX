@@ -492,6 +492,8 @@ func (t *InteractiveTUI) runAllVulnModules() {
 	httpClient := client.NewClient(t.Proxy, 8*time.Second, true, "", nil)
 	activeMods := []modules.Module{
 		modules.NewWAFModule(),
+		modules.NewHeadersModule(),
+		modules.NewExposureModule(),
 		modules.NewSQLiModule(),
 		modules.NewSSTIModule(),
 		modules.NewLFIModule(),
@@ -501,6 +503,13 @@ func (t *InteractiveTUI) runAllVulnModules() {
 		modules.NewRedirectModule(),
 		modules.NewSSRFModule(),
 		modules.NewJWTModule(),
+		modules.NewIDORModule(),
+		modules.NewCSRFModule(),
+		modules.NewXXEModule(),
+		modules.NewNoSQLiModule(),
+		modules.NewUploadModule(),
+		modules.NewHostHeaderModule(),
+		modules.NewCRLFModule(),
 	}
 
 	for _, mod := range activeMods {

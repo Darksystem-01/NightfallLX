@@ -81,6 +81,10 @@ func main() {
 		spiderMaxURLs  int
 		isInteractive  bool
 		headersFlag    arrayFlags
+		headers2Flag   arrayFlags
+		cookie2        string
+		scope          string
+		scopeOff       bool
 	)
 
 	// Target & Input
@@ -89,6 +93,12 @@ func main() {
 	flag.StringVar(&domain, "domain", "", "Domain for subdomain discovery / VHost fuzzing (e.g. -domain target.lab)")
 	flag.BoolVar(&isHTTPS, "https", false, "Force HTTPS scheme (useful with -r or raw domain)")
 	flag.BoolVar(&isHTTPS, "ssl", false, "Alias for --https")
+
+	// Scope Guard & Secondary Identity
+	flag.StringVar(&scope, "scope", "", "Scope domains or path to scope.txt (e.g. -scope target.lab,*.target.lab)")
+	flag.BoolVar(&scopeOff, "scope-off", false, "Explicitly disable scope guard checking")
+	flag.StringVar(&cookie2, "b2", "", "Secondary cookie value for IDOR / authorization testing")
+	flag.Var(&headers2Flag, "H2", "Secondary custom header (repeatable, e.g. -H2 'Authorization: Bearer user2')")
 
 	// Interactive Mouse Dashboard, Tech Detector, Sitemap & Shodan
 	flag.BoolVar(&isInteractive, "i", false, "Launch interactive mouse-controllable TUI dashboard")
@@ -104,7 +114,7 @@ func main() {
 	flag.StringVar(&shodanKey, "shodan-key", "", "Shodan API Key (optional, defaults to built-in or SHODAN_API_KEY env)")
 
 	// Vulnerability Assessment Modules
-	flag.StringVar(&moduleList, "m", "all", "Comma-separated modules: sqli, ssti, lfi, cmdi, xss, cors, redirect, ssrf, jwt, waf (or 'all')")
+	flag.StringVar(&moduleList, "m", "all", "Comma-separated modules: sqli, ssti, lfi, cmdi, xss, cors, redirect, ssrf, jwt, waf, idor, csrf, xxe, nosqli, upload, headers, exposure, hostheader, crlf (or 'all')")
 
 	// HTTP Options
 	flag.StringVar(&method, "X", "GET", "HTTP Method: GET, POST, PUT, etc.")
@@ -233,13 +243,41 @@ HTTP & PROXY CONFIGURATION:
 		os.Exit(exitCode)
 	}
 
-	// 2. Parse Custom Headers
+	// 2. Parse Custom Headers & Secondary Identity
 	parsedHeaders := make(map[string]string)
 	for _, h := range headersFlag {
 		if parts := strings.SplitN(h, ":", 2); len(parts) == 2 {
 			parsedHeaders[strings.TrimSpace(parts[0])] = strings.TrimSpace(parts[1])
 		}
 	}
+
+	parsedHeaders2 := make(map[string]string)
+	for _, h := range headers2Flag {
+		if parts := strings.SplitN(h, ":", 2); len(parts) == 2 {
+			parsedHeaders2[strings.TrimSpace(parts[0])] = strings.TrimSpace(parts[1])
+		}
+	}
+
+	// Scope parsing
+	var scopeHosts []string
+	if scope != "" {
+		if fileBytes, err := os.ReadFile(scope); err == nil {
+			for _, line := range strings.Split(string(fileBytes), "\n") {
+				line = strings.TrimSpace(line)
+				if line != "" && !strings.HasPrefix(line, "#") {
+					scopeHosts = append(scopeHosts, line)
+				}
+			}
+		} else {
+			for _, s := range strings.Split(scope, ",") {
+				if s = strings.TrimSpace(s); s != "" {
+					scopeHosts = append(scopeHosts, s)
+				}
+			}
+		}
+	}
+
+	fmt.Println("\033[1;33m⚠️  Authorization Notice: Ensure you have explicit authorization to test target host(s).\033[0m")
 
 	// 3. Handle Burp Suite Raw Request (-r)
 	var parsedRawReq *parser.RawRequest
@@ -463,14 +501,18 @@ HTTP & PROXY CONFIGURATION:
 	}
 
 	target := &modules.Target{
-		URL:     urlWithoutQuery,
-		Method:  strings.ToUpper(method),
-		Params:  queryParams,
-		Data:    postData,
-		Headers: parsedHeaders,
+		URL:      urlWithoutQuery,
+		Method:   strings.ToUpper(method),
+		Params:   queryParams,
+		Data:     postData,
+		Headers:  parsedHeaders,
+		Cookie2:  cookie2,
+		Headers2: parsedHeaders2,
 	}
 
 	httpClient := client.NewClient(proxy, time.Duration(timeoutSec)*time.Second, insecure, cookie, parsedHeaders)
+	httpClient.ScopeHosts = scopeHosts
+	httpClient.ScopeOff = scopeOff
 
 	// Step 1: Deep Technology & Version Fingerprint
 	det := detector.NewTechDetector()
@@ -489,25 +531,38 @@ HTTP & PROXY CONFIGURATION:
 
 	if len(target.Parameters()) == 0 {
 		fmt.Println("\033[33m[!] Notice: No query or body parameters detected in target URL.\033[0m")
-		fmt.Println("    Running passive / host modules (WAF, CORS). To test injection, add parameters: -u 'http://site/?id=1' or -d 'param=1'")
+		fmt.Println("    Running passive / host modules (WAF, Headers, Exposure, CORS). To test injection, add parameters: -u 'http://site/?id=1' or -d 'param=1'")
 	}
 
 	availableModules := map[string]modules.Module{
-		"sqli":     modules.NewSQLiModule(),
-		"ssti":     modules.NewSSTIModule(),
-		"lfi":      modules.NewLFIModule(),
-		"cmdi":     modules.NewCMDiModule(),
-		"xss":      modules.NewXSSModule(),
-		"cors":     modules.NewCORSModule(),
-		"redirect": modules.NewRedirectModule(),
-		"ssrf":     modules.NewSSRFModule(),
-		"jwt":      modules.NewJWTModule(),
-		"waf":      modules.NewWAFModule(),
+		"sqli":       modules.NewSQLiModule(),
+		"ssti":       modules.NewSSTIModule(),
+		"lfi":        modules.NewLFIModule(),
+		"cmdi":       modules.NewCMDiModule(),
+		"xss":        modules.NewXSSModule(),
+		"cors":       modules.NewCORSModule(),
+		"redirect":   modules.NewRedirectModule(),
+		"ssrf":       modules.NewSSRFModule(),
+		"jwt":        modules.NewJWTModule(),
+		"waf":        modules.NewWAFModule(),
+		"idor":       modules.NewIDORModule(),
+		"csrf":       modules.NewCSRFModule(),
+		"xxe":        modules.NewXXEModule(),
+		"nosqli":     modules.NewNoSQLiModule(),
+		"upload":     modules.NewUploadModule(),
+		"headers":    modules.NewHeadersModule(),
+		"exposure":   modules.NewExposureModule(),
+		"hostheader": modules.NewHostHeaderModule(),
+		"crlf":       modules.NewCRLFModule(),
 	}
 
 	var activeModules []modules.Module
 	if moduleList == "all" {
-		order := []string{"waf", "sqli", "ssti", "lfi", "cmdi", "xss", "cors", "redirect", "ssrf", "jwt"}
+		order := []string{
+			"waf", "headers", "exposure", "sqli", "ssti", "lfi", "cmdi",
+			"xss", "cors", "redirect", "ssrf", "jwt", "idor", "csrf",
+			"xxe", "nosqli", "upload", "hostheader", "crlf",
+		}
 		for _, name := range order {
 			activeModules = append(activeModules, availableModules[name])
 		}

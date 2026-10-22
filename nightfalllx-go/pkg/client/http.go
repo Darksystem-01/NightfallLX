@@ -2,7 +2,9 @@ package client
 
 import (
 	"crypto/tls"
+	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -30,6 +32,8 @@ type Client struct {
 	Insecure   bool
 	Headers    map[string]string
 	Cookie     string
+	ScopeHosts []string
+	ScopeOff   bool
 }
 
 // NewClient creates a new high-performance HTTP client.
@@ -65,11 +69,48 @@ func NewClient(proxyURL string, timeout time.Duration, insecure bool, cookie str
 		Insecure:   insecure,
 		Headers:    headers,
 		Cookie:     cookie,
+		ScopeOff:   false,
 	}
+}
+
+// IsInScope checks whether a host is permitted by the scope configuration.
+func (c *Client) IsInScope(host string) bool {
+	if c.ScopeOff || len(c.ScopeHosts) == 0 {
+		return true
+	}
+	cleanHost := host
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		cleanHost = h
+	}
+	cleanHost = strings.ToLower(cleanHost)
+
+	for _, s := range c.ScopeHosts {
+		s = strings.ToLower(strings.TrimSpace(s))
+		if s == "" {
+			continue
+		}
+		if s == cleanHost {
+			return true
+		}
+		if strings.HasPrefix(s, "*.") && strings.HasSuffix(cleanHost, s[1:]) {
+			return true
+		}
+		if strings.HasPrefix(s, ".") && strings.HasSuffix(cleanHost, s) {
+			return true
+		}
+	}
+	return false
 }
 
 // Request sends an HTTP request and measures its duration.
 func (c *Client) Request(method, reqURL, data string, customHeaders map[string]string) (*Response, error) {
+	u, parseErr := url.Parse(reqURL)
+	if parseErr == nil && u.Host != "" {
+		if !c.IsInScope(u.Host) {
+			return nil, fmt.Errorf("scope guard refusal: host '%s' is not in authorized scope (use -scope or -scope-off)", u.Host)
+		}
+	}
+
 	var bodyReader io.Reader
 	if data != "" {
 		bodyReader = strings.NewReader(data)

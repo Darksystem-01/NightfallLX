@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"nightfalllx/pkg/modules"
 	"os"
+	"strings"
 	"time"
 )
 
@@ -33,7 +34,11 @@ func WriteMarkdownReport(target *modules.Target, findings []*modules.Finding, fi
 	} else {
 		for _, item := range findings {
 			fmt.Fprintf(f, "| `%s` | %s | **%s** | %d%% | `%s` |\n",
-				item.Module, item.Title, item.Severity, item.Confidence, item.Parameter)
+				escapeMarkdownPipe(item.Module),
+				escapeMarkdownPipe(item.Title),
+				escapeMarkdownPipe(string(item.Severity)),
+				item.Confidence,
+				escapeMarkdownPipe(item.Parameter))
 		}
 	}
 
@@ -58,8 +63,15 @@ func WriteMarkdownReport(target *modules.Target, findings []*modules.Finding, fi
 	return nil
 }
 
+func escapeMarkdownPipe(s string) string {
+	return strings.ReplaceAll(s, "|", "\\|")
+}
+
 // WriteJSONReport writes findings to a JSON file.
 func WriteJSONReport(target *modules.Target, findings []*modules.Finding, filePath string) error {
+	if findings == nil {
+		findings = []*modules.Finding{}
+	}
 	data := map[string]interface{}{
 		"target": map[string]interface{}{
 			"url":        target.URL,

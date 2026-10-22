@@ -34,11 +34,13 @@ type Finding struct {
 
 // Target holds target URL parameters and metadata.
 type Target struct {
-	URL     string
-	Method  string
-	Params  map[string]string
-	Data    map[string]string
-	Headers map[string]string
+	URL      string
+	Method   string
+	Params   map[string]string
+	Data     map[string]string
+	Headers  map[string]string
+	Cookie2  string
+	Headers2 map[string]string
 }
 
 // Parameters returns a list of testable parameter names.

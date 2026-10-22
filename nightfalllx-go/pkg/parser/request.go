@@ -84,6 +84,17 @@ func ParseRawRequest(data []byte, isHTTPS bool) (*RawRequest, error) {
 		k := strings.TrimSpace(line[:colonIdx])
 		v := strings.TrimSpace(line[colonIdx+1:])
 
+		if strings.HasPrefix(k, ":") {
+			if strings.EqualFold(k, ":authority") && hostHeader == "" {
+				hostHeader = v
+			} else if strings.EqualFold(k, ":path") && rawPath == "" {
+				rawPath = v
+			} else if strings.EqualFold(k, ":method") && method == "" {
+				method = strings.ToUpper(v)
+			}
+			continue
+		}
+
 		if strings.EqualFold(k, "Host") {
 			hostHeader = v
 		} else if strings.EqualFold(k, "Cookie") {
@@ -137,6 +148,13 @@ func ParseRawRequest(data []byte, isHTTPS bool) (*RawRequest, error) {
 	}
 
 	bodyStr := string(bodyBytes)
+
+	// Recalculate Content-Length if present
+	for hk := range headers {
+		if strings.EqualFold(hk, "Content-Length") {
+			headers[hk] = fmt.Sprintf("%d", len(bodyBytes))
+		}
+	}
 
 	// 3. Parse Body Parameters (if application/x-www-form-urlencoded or plain key=value)
 	postParams := make(map[string]string)

@@ -3,6 +3,7 @@ package modules
 import (
 	"fmt"
 	"nightfalllx/pkg/client"
+	"regexp"
 	"strings"
 )
 
@@ -17,18 +18,21 @@ func (m *SQLiModule) Name() string {
 }
 
 func (m *SQLiModule) Description() string {
-	return "Differential boolean-based SQL injection detector"
+	return "Differential boolean-based & error-based SQL injection detector"
 }
 
-var sqliPairs = [][2]string{
-	{"%s AND 1=1", "%s AND 1=2"},
-	{"%s' AND '1'='1", "%s' AND '1'='2"},
-	{"%s' AND 1=1-- -", "%s' AND 1=2-- -"},
-	{"%s\" AND \"1\"=\"1", "%s\" AND \"1\"=\"2"},
-	{"%s\" AND 1=1-- -", "%s\" AND 1=2-- -"},
-	{"%s') AND ('1'='1", "%s') AND ('1'='2"},
-	{"%s') AND 1=1-- -", "%s') AND 1=2-- -"},
-}
+var (
+	sqlErrorRegex = regexp.MustCompile(`(?i)(you have an error in your sql syntax|error in your sql syntax|SQL syntax.*MySQL|Warning.*mysql_|valid MySQL result|MySqlClient\.|PostgreSQL.*ERROR|Warning.*\Wpg_|valid PostgreSQL result|Npgsql\.|Driver.*SQL[\-\_\ ]*Server|OLE DB.*SQL Server|\bORA\-[0-9]{4,5}|Oracle error|SQLite/JDBCDriver|SQLite.Exception|System.Data.SQLite.SQLiteException|syntax error near)`)
+	sqliPairs     = [][2]string{
+		{"%s AND 1=1", "%s AND 1=2"},
+		{"%s' AND '1'='1", "%s' AND '1'='2"},
+		{"%s' AND 1=1-- -", "%s' AND 1=2-- -"},
+		{"%s\" AND \"1\"=\"1", "%s\" AND \"1\"=\"2"},
+		{"%s\" AND 1=1-- -", "%s\" AND 1=2-- -"},
+		{"%s') AND ('1'='1", "%s') AND ('1'='2"},
+		{"%s') AND 1=1-- -", "%s') AND 1=2-- -"},
+	}
+)
 
 func (m *SQLiModule) Run(target *Target, c *client.Client) ([]*Finding, error) {
 	var findings []*Finding
@@ -78,6 +82,28 @@ func (m *SQLiModule) Run(target *Target, c *client.Client) ([]*Finding, error) {
 				if err != nil {
 					continue
 				}
+			}
+
+			// Error-based check
+			if sqlErrorRegex.MatchString(falseResp.Body) || sqlErrorRegex.MatchString(trueResp.Body) {
+				evidence := sqlErrorRegex.FindString(falseResp.Body)
+				if evidence == "" {
+					evidence = sqlErrorRegex.FindString(trueResp.Body)
+				}
+				findings = append(findings, &Finding{
+					Module:      m.Name(),
+					Title:       "SQL Injection (Error-Based)",
+					Severity:    SeverityCritical,
+					Confidence:  100,
+					URL:         target.URL,
+					Parameter:   param,
+					Payload:     falsePayload,
+					Detail:      fmt.Sprintf("Database engine syntax error disclosed: '%s'", evidence),
+					Evidence:    evidence,
+					Remediation: "Use parameterized queries (prepared statements) for all database operations.",
+					CWEID:       89,
+				})
+				break
 			}
 
 			trueSim := Similarity(baseResp.Body, trueResp.Body)

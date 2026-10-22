@@ -80,13 +80,20 @@ var DefaultSubdomainWordlist = []string{
 
 // Fuzzer performs high-speed concurrent fuzzing using goroutines.
 type Fuzzer struct {
-	cfg       *Config
-	client    *client.Client
-	results   []*Result
-	completed int64
-	total     int
-	resLock   sync.Mutex
-	startTime time.Time
+	cfg         *Config
+	client      *client.Client
+	results     []*Result
+	completed   int64
+	total       int
+	resLock     sync.Mutex
+	startTime   time.Time
+	hasBaseline bool
+	baseline    struct {
+		StatusCode int
+		Bytes      int
+		Words      int
+		Lines      int
+	}
 }
 
 // NewFuzzer initializes the Fuzzer with defaults.
@@ -209,13 +216,11 @@ func (f *Fuzzer) calibrate() {
 
 	resp, err := f.client.Request(f.cfg.Method, testURL, testData, customHeaders)
 	if err == nil && resp != nil {
-		f.cfg.FilterSizes[resp.Bytes] = true
-		if resp.Words > 0 {
-			f.cfg.FilterWords[resp.Words] = true
-		}
-		if resp.Lines > 0 {
-			f.cfg.FilterLines[resp.Lines] = true
-		}
+		f.hasBaseline = true
+		f.baseline.StatusCode = resp.StatusCode
+		f.baseline.Bytes = resp.Bytes
+		f.baseline.Words = resp.Words
+		f.baseline.Lines = resp.Lines
 		fmt.Printf("\033[33m[::] Auto-calibration (-ac): baseline wildcard detected (status %d, %d bytes, %d words, %d lines) -> auto-filtered\033[0m\n",
 			resp.StatusCode, resp.Bytes, resp.Words, resp.Lines)
 	}
@@ -291,6 +296,14 @@ func (f *Fuzzer) processWord(word string) {
 
 	resp, err := f.client.Request(f.cfg.Method, reqURL, reqData, customHeaders)
 	if err != nil || resp == nil {
+		return
+	}
+
+	// Auto-calibration baseline filtering (compound check: status AND size AND words/lines)
+	if f.hasBaseline && resp.StatusCode == f.baseline.StatusCode &&
+		resp.Bytes == f.baseline.Bytes &&
+		resp.Words == f.baseline.Words &&
+		resp.Lines == f.baseline.Lines {
 		return
 	}
 

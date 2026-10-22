@@ -58,16 +58,10 @@ type ShodanClient struct {
 	HTTPClient *http.Client
 }
 
-// DefaultAPIKey fallback if not specified via CLI or environment
-const DefaultAPIKey = "UW5m3SKZZjcEsHk4mAoFzxMToK3KOaql"
-
-// NewClient creates a new Shodan client
+// NewClient creates a new Shodan client from CLI flag or SHODAN_API_KEY environment variable.
 func NewClient(apiKey string) *ShodanClient {
 	if apiKey == "" {
 		apiKey = os.Getenv("SHODAN_API_KEY")
-	}
-	if apiKey == "" {
-		apiKey = DefaultAPIKey
 	}
 	return &ShodanClient{
 		APIKey: strings.TrimSpace(apiKey),
