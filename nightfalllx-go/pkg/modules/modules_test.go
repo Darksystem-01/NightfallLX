@@ -938,3 +938,97 @@ func TestJSONNestedSQLiAndIDOR(t *testing.T) {
 	}
 }
 
+func TestNegativeRegressionAllModules(t *testing.T) {
+	// Clean static server with hardened defensive headers
+	cleanServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Header().Set("Content-Security-Policy", "default-src 'self'")
+		w.Header().Set("X-Frame-Options", "DENY")
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
+		w.Header().Set("Server", "webserver")
+		w.Header().Set("Set-Cookie", "session=123; Secure; HttpOnly; SameSite=Strict; Path=/")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`<!DOCTYPE html><html><head><title>Safe Static Page</title></head><body><h1>Welcome</h1><p>Clean application page with no vulnerabilities.</p></body></html>`))
+	}))
+	defer cleanServer.Close()
+
+	// Static alert server containing static demo/harmless script/img tags
+	staticAlertServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Header().Set("Content-Security-Policy", "default-src 'self'")
+		w.Header().Set("X-Frame-Options", "DENY")
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
+		w.Header().Set("Server", "webserver")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`<!DOCTYPE html><html><head><title>Static Alert Page</title></head><body><h1>Safe Demo</h1><script>alert(1)</script><img onerror=alert(1)><p>Documentation only.</p></body></html>`))
+	}))
+	defer staticAlertServer.Close()
+
+	c := client.NewClient("", 2*time.Second, true, "", nil)
+
+	cleanTarget := &Target{
+		URL:    cleanServer.URL,
+		Method: "GET",
+		Params: map[string]string{"id": "1", "q": "search"},
+	}
+
+	allModules := []Module{
+		NewWAFModule(),
+		NewHeadersModule(),
+		NewExposureModule(),
+		NewSQLiModule(),
+		NewSSTIModule(),
+		NewLFIModule(),
+		NewCMDiModule(),
+		NewXSSModule(),
+		NewCORSModule(),
+		NewRedirectModule(),
+		NewSSRFModule(),
+		NewJWTModule(),
+		NewIDORModule(),
+		NewCSRFModule(),
+		NewXXEModule(),
+		NewNoSQLiModule(),
+		NewHostHeaderModule(),
+		NewCRLFModule(),
+		NewGraphQLModule(),
+		NewProtoPollutionModule(),
+		NewMassAssignModule(),
+		NewDeserializeModule(),
+	}
+
+	for _, mod := range allModules {
+		mod := mod
+		t.Run("CleanPage_"+mod.Name(), func(t *testing.T) {
+			findings, err := mod.Run(cleanTarget, c)
+			if err != nil {
+				t.Fatalf("module %s error on clean page: %v", mod.Name(), err)
+			}
+			if len(findings) != 0 {
+				t.Errorf("expected 0 findings for module %s on clean page, got %d (first finding: %s)", mod.Name(), len(findings), findings[0].Title)
+			}
+		})
+	}
+
+	t.Run("StaticAlertPage_XSSZeroConfirmed", func(t *testing.T) {
+		xssMod := NewXSSModule()
+		target := &Target{
+			URL:    staticAlertServer.URL,
+			Method: "GET",
+			Params: map[string]string{"q": "test", "id": "100"},
+		}
+		findings, err := xssMod.Run(target, c)
+		if err != nil {
+			t.Fatalf("XSS module run error: %v", err)
+		}
+		for _, f := range findings {
+			if f.ConfidenceLevel == ConfidenceConfirmed || f.Confidence == 100 {
+				t.Errorf("static alert page must never produce confirmed XSS finding, got: %s (payload: %s, confidence: %s/%d)", f.Title, f.Payload, f.ConfidenceLevel, f.Confidence)
+			}
+		}
+	})
+}
+
+
