@@ -112,3 +112,23 @@ All 10 scenarios passed:
   - `docs/DECISIONS.md`: License analysis (MIT), reference archive status, and architectural choices.
   - `docs/STATUS.md`: Checkpoint progress tracking and test logs.
   - `docs/MORNING_REPORT.md`: This comprehensive summary.
+
+---
+
+## 6. Fix round (Tuzatishlar hisoboti)
+
+Ushbu bosqichda ko'rsatilgan 6 ta nuqson to'liq bartaraf etildi va tekshirildi:
+
+1. **XSS "confirmed" noto'g'ri pozitivini yo'qotish (`pkg/xss`)**: `alert(1)` tekshiruvi o'chirildi. Har bir so'rov uchun unikal canary (`lxc` + 12 hex) yaratiladi va faqat javobda canary mavjud bo'lib, `CheckExecutableNode` tasdiqlasa `confirmed` deb belgilanadi. Statik alert sahifasida 0 ta confirmed natija olinishi test bilan tasdiqlandi. *(Holati: Bajarildi — commit `814a63b`)*.
+2. **`--crawl` orqali XSS dvigatelini oziqlantirish (`main.go`)**: `--crawl` sitemap spider'ini ishga tushirib, parametr yoki formaga ega barcha sahifalarni XSS moduliga uzatadi (`-max-urls` va `-depth` inobatga olinadi). `httptest` orqali faqat parametrlarga ega sahifada XSS topilishi testlandi. *(Holati: Bajarildi — commit `8b7cd76`)*.
+3. **Fiktiv CVE ma'lumotlari va searchsploit auditi**: Mock testlardagi mahsulot va CVE nomlari uydirma qiymatlarga o'zgartirildi (`FakeProduct 0.0.1`, `CVE-0000-0000`). Haqiqiy searchsploit testlarda ishlatilmagani qayd etildi. Mahalliy `searchsploit --json -- "php 3.4.5"` natijasi: 171 ta yozuv. *(Holati: Bajarildi — commit `aeabbd5`)*.
+4. **Yetishmayotgan fayllar va litsenziya**: `.gitignore` ga `.intel_cache/`, `lab_report.md`, `lab_report.json`, `*.log`, `docs/*_output*`, `*.key`, `*.env` qo'shildi. `DECISIONS.md` ga litsenziya fayli yo'qligi va MIT da'vosi tasdiqlanmaganligi yozildi. *(Holati: Bajarildi — commit `7af978f`)*.
+5. **Hujjatlardagi tafovutlar**: Vektorlar soni real `339` ga yangilandi (README, DECISIONS, MORNING_REPORT, STATUS). `--crawl` ta'rifi to'g'rilandi. `-m POST` faqat `POST` yoki `POST,` bilan boshlanganda ishlaydigan legacy shim sifatida belgilandi. *(Holati: Bajarildi — commit `35bcc5c`)*.
+6. **Yangi mantiq uchun negativ testlar**: Toza sahifa, statik alert sahifasi, text-node refleksiya va `ValidateQuery` (`-x`, `php;id`, 65-belgi) testlari qo'shildi va to'liq o'tdi. *(Holati: Bajarildi — testlar `pkg/xss` va `pkg/intel` da)*.
+
+**Test natijalari:**
+- Boshlanishida: `go vet` va `go test ./...` muvaffaqiyatli o'tgan edi.
+- Yakunida: `go vet ./...` (0 ogohlantirish), `go test -count=1 ./...` (barcha paketlar PASS), `go test -count=1 -race ./...` (0 poyga holati, barchasi PASS).
+- Testlar soni: `pkg/xss` — 8 ta asosiy, 14 ta subtest (jami 22 ta holat); `pkg/intel` — 5 ta test.
+- Bajarilmagan ishlar: Yo'q (hamma talab 100% bajarildi).
+

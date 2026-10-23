@@ -25,26 +25,52 @@ ok  	nightfalllx/pkg/troubleshoot	0.020s
 
 ---
 
-## Final Verification (Race Detection & Static Analysis)
-- **Go Vet (`go vet ./...`):** PASSED (clean, 0 warnings)
-- **Go Race Test (`go test -count=1 -race ./...`):**
-```
-ok  	nightfalllx	8.438s
-ok  	nightfalllx/pkg/client	1.222s
-ok  	nightfalllx/pkg/detector	1.013s
-ok  	nightfalllx/pkg/discovery	1.030s
-ok  	nightfalllx/pkg/fuzzer	1.017s
-ok  	nightfalllx/pkg/intel	1.021s
-ok  	nightfalllx/pkg/modules	1.144s
-ok  	nightfalllx/pkg/oast	1.121s
-ok  	nightfalllx/pkg/parser	1.018s
-ok  	nightfalllx/pkg/reporters	1.025s
-ok  	nightfalllx/pkg/shodan	1.203s
-ok  	nightfalllx/pkg/sitemap	1.026s
-ok  	nightfalllx/pkg/troubleshoot	1.013s
-?   	nightfalllx/pkg/tui	[no test files]
-ok  	nightfalllx/pkg/xss	1.023s
-```
+## Fix Round Verification (Before and After)
+- **Go Toolchain:** `go version go1.26.5 linux/amd64` (meets requirement Go 1.26 required by `go.mod`)
+- **Before Fix Round:**
+  - `go vet ./...`: PASSED (0 warnings)
+  - `go test -count=1 ./...`: PASSED (all packages passing)
+- **After Fix Round:**
+  - `go vet ./...`: PASSED (clean, 0 warnings)
+  - `go test -count=1 ./...`:
+  ```
+  ok  	nightfalllx	5.743s
+  ok  	nightfalllx/pkg/client	0.214s
+  ok  	nightfalllx/pkg/detector	0.008s
+  ok  	nightfalllx/pkg/discovery	0.016s
+  ok  	nightfalllx/pkg/fuzzer	0.009s
+  ok  	nightfalllx/pkg/intel	0.015s
+  ok  	nightfalllx/pkg/modules	0.074s
+  ok  	nightfalllx/pkg/oast	0.109s
+  ok  	nightfalllx/pkg/parser	0.004s
+  ok  	nightfalllx/pkg/reporters	0.007s
+  ok  	nightfalllx/pkg/shodan	3.360s
+  ok  	nightfalllx/pkg/sitemap	0.010s
+  ok  	nightfalllx/pkg/troubleshoot	0.007s
+  ?   	nightfalllx/pkg/tui	[no test files]
+  ok  	nightfalllx/pkg/xss	0.018s
+  ```
+  - `go test -count=1 -race ./...`:
+  ```
+  ok  	nightfalllx	10.606s
+  ok  	nightfalllx/pkg/client	1.234s
+  ok  	nightfalllx/pkg/detector	1.020s
+  ok  	nightfalllx/pkg/discovery	1.069s
+  ok  	nightfalllx/pkg/fuzzer	1.027s
+  ok  	nightfalllx/pkg/intel	1.034s
+  ok  	nightfalllx/pkg/modules	1.263s
+  ok  	nightfalllx/pkg/oast	1.133s
+  ok  	nightfalllx/pkg/parser	1.035s
+  ok  	nightfalllx/pkg/reporters	1.054s
+  ok  	nightfalllx/pkg/shodan	1.036s
+  ok  	nightfalllx/pkg/sitemap	1.052s
+  ok  	nightfalllx/pkg/troubleshoot	1.029s
+  ?   	nightfalllx/pkg/tui	[no test files]
+  ok  	nightfalllx/pkg/xss	1.067s
+  ```
+- **Test Counts:**
+  - `pkg/xss`: 8 top-level test functions (`TestFindReflectionsAndContexts`, `TestNegativeCleanPageReflection`, `TestCheckExecutableNode`, `TestAnalyzeDOMScript`, `TestFormsAndCSRF`, `TestEngineWithServerFixtures`, `TestStaticAlertZeroConfirmed`, `TestTextNodeReflectionNotConfirmed`), 14 subtests — total 22 test executions.
+  - `pkg/intel`: 5 test functions (`TestQueryValidation`, `TestSearchsploitWithFakeBinary`, `TestSearchsploitMissingBinary`, `TestNVDClientWithMockServer`, `TestExtractProductVersions`). All passed.
 
 ---
 
