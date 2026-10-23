@@ -137,6 +137,17 @@ func (e *Engine) ScanTarget(target *Target, c *client.Client) ([]*Finding, error
 	return findings, nil
 }
 
+// BuildVectorWithCanary embeds the unique canary token into the test vector payload.
+func BuildVectorWithCanary(basePayload, canary string) string {
+	if strings.Contains(basePayload, "alert(1)") {
+		return strings.ReplaceAll(basePayload, "alert(1)", "alert("+canary+")")
+	}
+	if strings.Contains(basePayload, "(1)") {
+		return strings.ReplaceAll(basePayload, "(1)", "("+canary+")")
+	}
+	return basePayload + canary
+}
+
 func (e *Engine) testParameter(param string, target *Target, c *client.Client) []*Finding {
 	var findings []*Finding
 
@@ -172,38 +183,40 @@ func (e *Engine) testParameter(param string, target *Target, c *client.Client) [
 
 	// Step 4.4: Inject Test Vectors
 	for _, vec := range candidateVectors {
-		vecResp, errVec := e.sendParam(target, param, vec.Payload, c)
+		canary := RandomToken("lxc", 12)
+		payload := BuildVectorWithCanary(vec.Payload, canary)
+
+		vecResp, errVec := e.sendParam(target, param, payload, c)
 		if errVec != nil || vecResp == nil {
 			continue
 		}
 
 		// A4 Confidence Evaluation:
-		// 1. Confirmed: active executable node holding unescaped test string
-		isExec, proof := CheckExecutableNode(vecResp.Body, "alert(1)")
-		if !isExec {
-			// Check if payload itself created an executable node
-			isExec, proof = CheckExecutableNode(vecResp.Body, vec.Payload)
-		}
-
-		if isExec {
-			confirmedFinding = &Finding{
-				Title:           fmt.Sprintf("Confirmed Reflected XSS (%s)", vec.Category),
-				Severity:        "HIGH",
-				Confidence:      100,
-				ConfidenceLevel: "confirmed",
-				URL:             target.URL,
-				Parameter:       param,
-				Payload:         vec.Payload,
-				Detail:          fmt.Sprintf("The parameter was confirmed vulnerable to Reflected Cross-Site Scripting. The injected vector executed in context '%s'.", primaryContext),
-				Evidence:        proof,
-				Remediation:     "Implement context-aware HTML entity encoding or Content Security Policy (CSP).",
-				CWEID:           79,
+		// 1. Confirmed only if:
+		// (a) the canary appears in the response, and
+		// (b) CheckExecutableNode(body, canary) is true.
+		if strings.Contains(vecResp.Body, canary) {
+			isExec, proof := CheckExecutableNode(vecResp.Body, canary)
+			if isExec {
+				confirmedFinding = &Finding{
+					Title:           fmt.Sprintf("Confirmed Reflected XSS (%s)", vec.Category),
+					Severity:        "HIGH",
+					Confidence:      100,
+					ConfidenceLevel: "confirmed",
+					URL:             target.URL,
+					Parameter:       param,
+					Payload:         payload,
+					Detail:          fmt.Sprintf("The parameter was confirmed vulnerable to Reflected Cross-Site Scripting. The injected vector executed in context '%s'.", primaryContext),
+					Evidence:        proof,
+					Remediation:     "Implement context-aware HTML entity encoding or Content Security Policy (CSP).",
+					CWEID:           79,
+				}
+				break // Confirmed found, no need to probe further for this parameter
 			}
-			break // Confirmed found, no need to probe further for this parameter
 		}
 
 		// 2. Probable: string is reflected unescaped in dangerous context
-		if strings.Contains(vecResp.Body, vec.Payload) && probableFinding == nil {
+		if strings.Contains(vecResp.Body, payload) && probableFinding == nil {
 			if reflections[0].IsDangerous {
 				probableFinding = &Finding{
 					Title:           fmt.Sprintf("Probable Reflected XSS (%s)", vec.Category),
@@ -212,9 +225,9 @@ func (e *Engine) testParameter(param string, target *Target, c *client.Client) [
 					ConfidenceLevel: "probable",
 					URL:             target.URL,
 					Parameter:       param,
-					Payload:         vec.Payload,
+					Payload:         payload,
 					Detail:          fmt.Sprintf("The vector was reflected unescaped in dangerous context '%s', but parser did not verify active node execution.", primaryContext),
-					Evidence:        extractSnippet(vecResp.Body, vec.Payload, 40),
+					Evidence:        extractSnippet(vecResp.Body, payload, 40),
 					Remediation:     "Sanitize and encode all reflected parameters using context-appropriate HTML encoders.",
 					CWEID:           79,
 				}

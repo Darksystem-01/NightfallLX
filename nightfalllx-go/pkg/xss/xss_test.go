@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"nightfalllx/pkg/client"
+	"strings"
 	"testing"
 	"time"
 )
@@ -220,5 +221,89 @@ func TestEngineWithServerFixtures(t *testing.T) {
 	}
 	if len(cleanFindings) != 0 {
 		t.Errorf("expected 0 findings on clean server, got %d", len(cleanFindings))
+	}
+}
+
+// TestStaticAlertZeroConfirmed ensures static alert(1) tags do not cause false confirmed findings.
+func TestStaticAlertZeroConfirmed(t *testing.T) {
+	staticAlertServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`<!DOCTYPE html>
+<html>
+<head><title>Static Alert Page</title></head>
+<body>
+  <h1>Safe Page with Static Demo Code</h1>
+  <script>alert(1)</script>
+  <img src="logo.png" onerror=alert(1)>
+  <p>Static documentation page.</p>
+</body>
+</html>`))
+	}))
+	defer staticAlertServer.Close()
+
+	c := client.NewClient("", 5*time.Second, true, "", nil)
+	engine := NewEngine(&EngineConfig{
+		EnableDOM:          false,
+		EnableForms:        false,
+		EnableStored:       false,
+		MaxVectorsPerParam: 10,
+	})
+
+	target := &Target{
+		URL:    staticAlertServer.URL,
+		Method: "GET",
+		Params: map[string]string{"search": "query", "id": "1"},
+	}
+
+	findings, err := engine.ScanTarget(target, c)
+	if err != nil {
+		t.Fatalf("ScanTarget failed: %v", err)
+	}
+
+	for _, f := range findings {
+		if f.ConfidenceLevel == "confirmed" {
+			t.Errorf("expected zero confirmed findings on static alert page, got confirmed finding: %s (payload: %s)", f.Title, f.Payload)
+		}
+	}
+}
+
+// TestTextNodeReflectionNotConfirmed ensures reflection in text nodes only never yields confirmed XSS.
+func TestTextNodeReflectionNotConfirmed(t *testing.T) {
+	textReflectionServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query().Get("q")
+		w.Header().Set("Content-Type", "text/html")
+		w.WriteHeader(http.StatusOK)
+		// Safely HTML entity encode to reflect only in text node
+		safe := strings.ReplaceAll(q, "<", "&lt;")
+		safe = strings.ReplaceAll(safe, ">", "&gt;")
+		safe = strings.ReplaceAll(safe, "\"", "&quot;")
+		w.Write([]byte("<!DOCTYPE html><html><body><h1>Search Results</h1><p>" + safe + "</p></body></html>"))
+	}))
+	defer textReflectionServer.Close()
+
+	c := client.NewClient("", 5*time.Second, true, "", nil)
+	engine := NewEngine(&EngineConfig{
+		EnableDOM:          false,
+		EnableForms:        false,
+		EnableStored:       false,
+		MaxVectorsPerParam: 10,
+	})
+
+	target := &Target{
+		URL:    textReflectionServer.URL,
+		Method: "GET",
+		Params: map[string]string{"q": "test"},
+	}
+
+	findings, err := engine.ScanTarget(target, c)
+	if err != nil {
+		t.Fatalf("ScanTarget failed: %v", err)
+	}
+
+	for _, f := range findings {
+		if f.ConfidenceLevel == "confirmed" {
+			t.Errorf("text node reflection must never be confirmed, got: %s", f.Title)
+		}
 	}
 }

@@ -56,7 +56,7 @@ func (m *XSSModule) Run(target *Target, c *client.Client) ([]*Finding, error) {
 			RawJSON: target.RawJSON,
 		}
 		xFindings, err := m.engine.ScanTarget(xTarget, c)
-		if err == nil && len(xFindings) > 0 {
+		if err == nil {
 			var findings []*Finding
 			for _, xf := range xFindings {
 				conf := ConfidencePossible
