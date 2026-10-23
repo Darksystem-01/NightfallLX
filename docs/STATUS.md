@@ -25,52 +25,86 @@ ok  	nightfalllx/pkg/troubleshoot	0.020s
 
 ---
 
-## Fix Round Verification (Before and After)
+## Fix Round 1 Verification (Before and After)
 - **Go Toolchain:** `go version go1.26.5 linux/amd64` (meets requirement Go 1.26 required by `go.mod`)
 - **Before Fix Round:**
   - `go vet ./...`: PASSED (0 warnings)
   - `go test -count=1 ./...`: PASSED (all packages passing)
 - **After Fix Round:**
   - `go vet ./...`: PASSED (clean, 0 warnings)
+  - `go test -count=1 ./...`: PASSED (all packages passing)
+  - `go test -count=1 -race ./...`: PASSED (0 races)
+- **Test Counts:**
+  - `pkg/xss`: 8 top-level test functions (22 total executions)
+  - `pkg/intel`: 5 test functions (all passed)
+
+---
+
+## Hardening Round 2 Verification (Before and After)
+- **Branch:** `fix/hardening-round-2`
+- **Go Toolchain:** `go version go1.26.5 linux/amd64` (Go 1.26 required by `go.mod` preserved without lowering)
+- **Before Changes:**
+  - `go vet ./...`: PASSED (clean, 0 warnings)
   - `go test -count=1 ./...`:
   ```
-  ok  	nightfalllx	5.743s
-  ok  	nightfalllx/pkg/client	0.214s
-  ok  	nightfalllx/pkg/detector	0.008s
-  ok  	nightfalllx/pkg/discovery	0.016s
-  ok  	nightfalllx/pkg/fuzzer	0.009s
-  ok  	nightfalllx/pkg/intel	0.015s
-  ok  	nightfalllx/pkg/modules	0.074s
+  ok  	nightfalllx	5.715s
+  ok  	nightfalllx/pkg/client	0.212s
+  ok  	nightfalllx/pkg/detector	0.006s
+  ok  	nightfalllx/pkg/discovery	0.017s
+  ok  	nightfalllx/pkg/fuzzer	0.012s
+  ok  	nightfalllx/pkg/intel	0.017s
+  ok  	nightfalllx/pkg/modules	0.064s
   ok  	nightfalllx/pkg/oast	0.109s
-  ok  	nightfalllx/pkg/parser	0.004s
+  ok  	nightfalllx/pkg/parser	0.007s
   ok  	nightfalllx/pkg/reporters	0.007s
-  ok  	nightfalllx/pkg/shodan	3.360s
-  ok  	nightfalllx/pkg/sitemap	0.010s
-  ok  	nightfalllx/pkg/troubleshoot	0.007s
+  ok  	nightfalllx/pkg/shodan	0.112s
+  ok  	nightfalllx/pkg/sitemap	0.008s
+  ok  	nightfalllx/pkg/troubleshoot	0.008s
   ?   	nightfalllx/pkg/tui	[no test files]
-  ok  	nightfalllx/pkg/xss	0.018s
+  ok  	nightfalllx/pkg/xss	0.013s
+  ```
+- **After Changes:**
+  - `go vet ./...`: PASSED (clean, 0 warnings)
+  - `go test -count=1 ./...`:
+  ```
+  ok  	nightfalllx	5.744s
+  ok  	nightfalllx/pkg/client	0.221s
+  ok  	nightfalllx/pkg/detector	0.013s
+  ok  	nightfalllx/pkg/discovery	0.034s
+  ok  	nightfalllx/pkg/fuzzer	0.020s
+  ok  	nightfalllx/pkg/intel	0.031s
+  ok  	nightfalllx/pkg/modules	0.364s
+  ok  	nightfalllx/pkg/oast	0.115s
+  ok  	nightfalllx/pkg/parser	0.020s
+  ok  	nightfalllx/pkg/reporters	0.014s
+  ok  	nightfalllx/pkg/shodan	0.117s
+  ok  	nightfalllx/pkg/sitemap	0.014s
+  ok  	nightfalllx/pkg/troubleshoot	0.011s
+  ?   	nightfalllx/pkg/tui	[no test files]
+  ok  	nightfalllx/pkg/xss	0.024s
   ```
   - `go test -count=1 -race ./...`:
   ```
-  ok  	nightfalllx	10.606s
-  ok  	nightfalllx/pkg/client	1.234s
-  ok  	nightfalllx/pkg/detector	1.020s
-  ok  	nightfalllx/pkg/discovery	1.069s
-  ok  	nightfalllx/pkg/fuzzer	1.027s
-  ok  	nightfalllx/pkg/intel	1.034s
-  ok  	nightfalllx/pkg/modules	1.263s
-  ok  	nightfalllx/pkg/oast	1.133s
-  ok  	nightfalllx/pkg/parser	1.035s
-  ok  	nightfalllx/pkg/reporters	1.054s
-  ok  	nightfalllx/pkg/shodan	1.036s
-  ok  	nightfalllx/pkg/sitemap	1.052s
-  ok  	nightfalllx/pkg/troubleshoot	1.029s
+  ok  	nightfalllx	10.231s
+  ok  	nightfalllx/pkg/client	1.241s
+  ok  	nightfalllx/pkg/detector	1.038s
+  ok  	nightfalllx/pkg/discovery	1.067s
+  ok  	nightfalllx/pkg/fuzzer	1.040s
+  ok  	nightfalllx/pkg/intel	1.052s
+  ok  	nightfalllx/pkg/modules	2.630s
+  ok  	nightfalllx/pkg/oast	1.153s
+  ok  	nightfalllx/pkg/parser	1.047s
+  ok  	nightfalllx/pkg/reporters	1.062s
+  ok  	nightfalllx/pkg/shodan	1.051s
+  ok  	nightfalllx/pkg/sitemap	1.057s
+  ok  	nightfalllx/pkg/troubleshoot	1.024s
   ?   	nightfalllx/pkg/tui	[no test files]
-  ok  	nightfalllx/pkg/xss	1.067s
+  ok  	nightfalllx/pkg/xss	1.058s
   ```
-- **Test Counts:**
-  - `pkg/xss`: 8 top-level test functions (`TestFindReflectionsAndContexts`, `TestNegativeCleanPageReflection`, `TestCheckExecutableNode`, `TestAnalyzeDOMScript`, `TestFormsAndCSRF`, `TestEngineWithServerFixtures`, `TestStaticAlertZeroConfirmed`, `TestTextNodeReflectionNotConfirmed`), 14 subtests — total 22 test executions.
-  - `pkg/intel`: 5 test functions (`TestQueryValidation`, `TestSearchsploitWithFakeBinary`, `TestSearchsploitMissingBinary`, `TestNVDClientWithMockServer`, `TestExtractProductVersions`). All passed.
+- **Test Counts in Changed Packages:**
+  - `pkg/modules`: 23 top-level tests (plus 23 subtests in `TestNegativeRegressionAllModules` = 46 test executions). All 23 pass.
+  - `pkg/intel`: 6 top-level tests (5 pass, 1 skipped by default; when `NFLX_REAL_SEARCHSPLOIT=1` is set, all 6 pass with 171 parseable items).
+  - `pkg/xss`: 8 top-level tests (22 test executions). All pass.
 
 ---
 
