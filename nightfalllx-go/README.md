@@ -17,7 +17,7 @@ Modeled on the architectural concepts of XSStrike, engineered from first princip
   - `confirmed`: Active executable HTML node created containing the unescaped canary. Regex alone never produces `confirmed`.
   - `probable`: Injected string reflected unescaped in a dangerous context, or static DOM source-to-sink flow detected.
   - `possible`: Surviving special characters or filter anomaly.
-- **Static DOM Flow Analysis (`--dom`)**: Tracks client-side data flows from sources (`location.hash`, `location.search`, `location.href`, `document.URL`, `document.referrer`, `window.name`, `postMessage`) to dangerous sinks (`innerHTML`, `outerHTML`, `document.write`, `eval`, `setTimeout`, `setInterval`, `location`, `jQuery.html()`). Reports file, line number, source, and sink.
+- **Static DOM Flow Analysis (`--dom`)**: Tracks client-side data flows from sources (`location.hash`, `location.search`, `location.href`, `document.URL`, `document.referrer`, `window.name`, `postMessage`) to dangerous sinks (`innerHTML`, `outerHTML`, `document.write`, `eval`, `setTimeout`, `setInterval`, `location`, `jQuery.html()`). Reports file, line number, source, and sink. Enabled by default; disable with `--dom=false` or `--no-dom`.
 - **Form Parsing & CSRF Re-fetching (`--forms`)**: Automatically discovers HTML forms, parses inputs, and re-fetches origin pages before each submission to maintain valid CSRF / anti-automation tokens.
 - **Stored Reflection Testing (`--stored`)**: Submits unique tokens via forms, crawls linked pages, and identifies persistent reflection. The report explicitly highlights that test tokens remain stored on the target.
 - **Headless Browser DOM Validation (`--dom-browser`)**: Gracefully checks for local Chromium/Chrome on `PATH`. If missing, execution proceeds without interruption.
@@ -33,7 +33,7 @@ Automatic public vulnerability metadata referencing for detected technologies:
 ### 3. Expanded Module Test Sets
 All core test sets have been expanded to 50–100 non-destructive, marker-based entries with category and source headers:
 - `lfi`: Traversal variants (Unix, Windows, URL-encoded, double-encoded, null-byte, `/proc/version`, PHP filter streams).
-- `sqli`: Error-based heuristics across MySQL, PostgreSQL, MSSQL, Oracle, SQLite, and boolean differential pairs.
+- `sqli`: Error-based heuristics across MySQL, PostgreSQL, MSSQL, Oracle, SQLite, boolean differential pairs, and dual-scaling time-based checks (actual code defaults: 3s delay with 6s secondary confirmation via `-sqli-delay`).
 - `ssti`: Polyglots and deterministic math expressions (`{{7*7}}`, `${7*7}`, `#{7*7}`) across Jinja2, Twig, Smarty, Freemarker, Velocity, SpringEL, Pebble, ERB, Mako, etc.
 - `cmdi`: Non-destructive echo markers (`whoami`, `id`) with argument/operator separators (`;`, `&&`, `|`, `||`, `$()`, backticks).
 - `ssrf`: Cloud metadata endpoints (AWS, GCP, Azure, DO, OCI, Alibaba, Kubernetes) and alternative loopback encodings (Decimal, Octal, Hex, IPv6).
@@ -59,7 +59,9 @@ NightfallLX preserves all existing CLI flags and introduces long-named options f
 | `-t` | `-t <threads>` | Concurrency worker count (default: 10) |
 | `-w` | `-w <wordlist>` | Wordlist for parameter brute-forcing / fuzzing |
 | `-o` | `-o <dir>` | Output directory for markdown and JSON reports |
-| `-d` (in XSStrike) | `--dom` | Enable client-side static DOM source-to-sink analysis |
+| `-d` (in XSStrike) | `--dom` | Static DOM source-to-sink analysis (enabled by default; disable with `--dom=false` or `--no-dom`) |
+| *New* | `--no-dom` | Disable static DOM XSS source-to-sink analysis |
+| *New* | `-sqli-delay <sec>` | Delay in seconds for time-based SQL injection tests (default: 3s; secondary confirmation: 6s) |
 | `-l` (in XSStrike) | `--forms` | Parse HTML forms and test input fields |
 | `-p` (in XSStrike) | `--param-brute` | Parameter discovery / brute-force before scanning |
 | `-f` (in XSStrike) | `--xss-fuzz` | Parameter fuzzing mode |

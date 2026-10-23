@@ -123,6 +123,7 @@ func main() {
 
 		// Native XSS Engine & Flag Mapping
 		enableDOM          bool
+		noDOM              bool
 		enableDOMBrowser   bool
 		enableForms        bool
 		enableParamBrute   bool
@@ -179,7 +180,8 @@ func main() {
 	flag.IntVar(&rateLimit, "rate", 0, "Rate limit in requests per second (default: 0 = unlimited)")
 
 	// Native XSS Engine & XSStrike Compatibility Flags
-	flag.BoolVar(&enableDOM, "dom", true, "Enable static DOM XSS source-to-sink analysis (default: true)")
+	flag.BoolVar(&enableDOM, "dom", true, "Enable static DOM XSS source-to-sink analysis (default: true; disable with -dom=false or --no-dom)")
+	flag.BoolVar(&noDOM, "no-dom", false, "Disable static DOM XSS source-to-sink analysis")
 	flag.BoolVar(&enableDOMBrowser, "dom-browser", false, "Validate DOM XSS with headless Chrome/Chromium if installed")
 	flag.BoolVar(&enableForms, "forms", false, "Automatically extract and test HTML forms with CSRF refresh")
 	flag.BoolVar(&xssFuzz, "xss-fuzz", false, "Fuzz parameters with filter survival probing")
@@ -271,6 +273,9 @@ func main() {
 	}
 
 	flag.Parse()
+	if noDOM {
+		enableDOM = false
+	}
 
 	// Merge --header into headersFlag
 	for _, h := range headerLongFlag {

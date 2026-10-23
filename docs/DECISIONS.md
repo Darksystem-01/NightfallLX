@@ -30,7 +30,9 @@ Existing flags preserve exact backward compatibility:
 - `-o`: Report output base filename
 
 New long-named flags:
-- `--dom`: Static DOM source-to-sink analysis
+- `--dom`: Static DOM source-to-sink analysis (enabled by default; disable with `--dom=false` or `--no-dom`)
+- `--no-dom`: Disable static DOM source-to-sink analysis
+- `-sqli-delay`: Base delay in seconds for time-based SQL injection tests (actual code default: 3s; secondary confirmation probe uses 6s; replaces any earlier 1s->4s drafts)
 - `--dom-browser`: Optional headless Chrome/Chromium DOM validation if installed
 - `--forms`: Automatic HTML form extraction and testing (with CSRF token regeneration)
 - `--param-brute`: Parameter discovery using wordlist
