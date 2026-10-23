@@ -12,7 +12,7 @@ Its primary design principle is **zero false positives**: every finding is backe
 Modeled on the architectural concepts of XSStrike, engineered from first principles in idiomatic Go:
 - **HTML Context Classification**: Parses HTTP response bodies into an AST using `golang.org/x/net/html`. Classifies reflections into precise contexts: `html-text`, `attribute-quoted`, `attribute-unquoted`, `js-string-single`, `js-string-double`, `js-template`, `js-raw`, `url-attribute`, `html-comment`, and `tag-name`.
 - **Character Probing**: Sends harmless character survival probes (`< > " ' ` / ( ) ; =`) to detect active sanitizers or WAF filters before injecting vectors, avoiding wasteful requests.
-- **Embedded Harmless Vector Corpus**: 335 curated, non-destructive test vectors embedded with `//go:embed` across 10 functional categories (`html-tag`, `attribute-context`, `js-string-context`, `js-template-context`, `url-scheme`, `event-handler`, `svg`, `math`, `combined-context`, `filter-robustness`). All vectors use harmless canaries (`alert(1)` or random tokens); **no cookie stealing, no external callbacks, no persistent vandalism**.
+- **Embedded Harmless Vector Corpus**: 339 curated, non-destructive test vectors embedded with `//go:embed` across 10 functional categories (`html-tag`, `attribute-context`, `js-string-context`, `js-template-context`, `url-scheme`, `event-handler`, `svg`, `math`, `combined-context`, `filter-robustness`). All vectors use harmless canaries (`alert(1)` or random tokens); **no cookie stealing, no external callbacks, no persistent vandalism**.
 - **Three-Tier Confidence Grading**:
   - `confirmed`: Active executable HTML node created containing the unescaped canary. Regex alone never produces `confirmed`.
   - `probable`: Injected string reflected unescaped in a dangerous context, or static DOM source-to-sink flow detected.
@@ -55,7 +55,7 @@ NightfallLX preserves all existing CLI flags and introduces long-named options f
 | `-b` | `-b <cookie>` | Cookie header string (maps from `-c` in other tools) |
 | `-m` | `-m <modules>` | Comma-separated module list (`xss`, `sqli`, `all`, etc.) |
 | `-X` | `-X <method>` | HTTP method (`GET`, `POST`, `PUT`, `DELETE`) |
-| `-m POST` | `-X POST` | Handled automatically: `-m POST` is mapped to `-X POST` |
+| `-m POST` | `-X POST` | Legacy shim: only triggers if `-m` equals `POST` or starts with `POST,` |
 | `-t` | `-t <threads>` | Concurrency worker count (default: 10) |
 | `-w` | `-w <wordlist>` | Wordlist for parameter brute-forcing / fuzzing |
 | `-o` | `-o <dir>` | Output directory for markdown and JSON reports |
@@ -63,7 +63,7 @@ NightfallLX preserves all existing CLI flags and introduces long-named options f
 | `-l` (in XSStrike) | `--forms` | Parse HTML forms and test input fields |
 | `-p` (in XSStrike) | `--param-brute` | Parameter discovery / brute-force before scanning |
 | `-f` (in XSStrike) | `--xss-fuzz` | Parameter fuzzing mode |
-| *New* | `--crawl` | Crawl internal links to discover parameters and forms |
+| *New* | `--crawl` | Spider target site and run XSS engine on all discovered endpoints with parameters or forms (honoring `-max-urls` and `-depth`) |
 | *New* | `--stored` | Test for stored/persistent XSS via form submissions |
 | *New* | `--dom-browser` | Attempt headless Chromium verification for DOM sinks |
 | *New* | `--header "H: V"` | Repeatable custom HTTP header flag |

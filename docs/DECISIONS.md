@@ -4,7 +4,7 @@
 - **Repository License:** License file missing from repo; MIT claim unverified until the owner adds it.
 - **Third-Party Attribution & Source Integrity:**
   - The native Go XSS detection engine (`pkg/xss`) is designed and implemented from first principles in idiomatic Go. No third-party code is translated line-by-line.
-  - All test vectors and character probes are authored as short, deterministic marker-based strings using safe canaries (e.g. `alert(1)`, unique random tokens `lxcanary...`).
+  - All test vectors and character probes are authored as short, deterministic marker-based strings using safe canaries (e.g. `alert(1)`, unique random tokens `lxcanary...`). Total active vector count is 339 across 10 embedded category files.
   - CC BY-SA sources: No text or code copied. All logic and patterns are independently written.
   - Third-party Go dependencies used: `golang.org/x/net/html` (BSD-3-Clause license) for robust, standard-compliant HTML5 DOM tree parsing.
 
@@ -20,7 +20,7 @@ Existing flags preserve exact backward compatibility:
 - `-p`: Proxy URL
 - `-b`: Cookie
 - `-m`: Vulnerability module list (`-m sqli,xss` or `-m all`)
-- `-X`: HTTP Method (maps method; `-m POST` in third-party tools is routed to `-X POST`)
+- `-X`: HTTP Method (maps method; legacy compatibility shim: if `-m` equals `POST` or starts with `POST,`, it is treated as a legacy shim mapping to `-X POST`)
 - `-t`: Concurrency worker threads
 - `-k`: TLS certificate verification bypass
 - `-timeout`: Network timeout in seconds
@@ -35,7 +35,7 @@ New long-named flags:
 - `--forms`: Automatic HTML form extraction and testing (with CSRF token regeneration)
 - `--param-brute`: Parameter discovery using wordlist
 - `--xss-fuzz`: Filter probing and fuzzing mode with `-mc`, `-fc`, `-ms`, `-fs`
-- `--crawl`: Spider and crawl site prior to XSS testing
+- `--crawl`: Runs the sitemap spider (`pkg/sitemap`) first, then feeds all discovered URLs with parameters or forms to the XSS engine honoring `-max-urls` and `-depth`
 - `--log <file>`: Dedicated log file output
 - `--header "Name: value"`: Repeatable custom header flag (alias to `-H`)
 - `--intel-query "<product> <version>"`: Manual searchsploit / NVD reference lookup query
