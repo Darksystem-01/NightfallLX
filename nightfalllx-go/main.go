@@ -84,6 +84,7 @@ func main() {
 		isShodan           bool
 		shodanKey          string
 		isSiteMap          bool
+		isCrawlXSS         bool
 		spiderDepth        int
 		spiderMaxURLs      int
 		isInteractive      bool
@@ -198,7 +199,7 @@ func main() {
 	flag.BoolVar(&isTech, "tech", false, "Run Wappalyzer-grade technology & exact version detector")
 	flag.BoolVar(&isSiteMap, "map", false, "Spider and generate full web application architecture site map")
 	flag.BoolVar(&isSiteMap, "spider", false, "Alias for --map")
-	flag.BoolVar(&isSiteMap, "crawl", false, "Alias for --map")
+	flag.BoolVar(&isCrawlXSS, "crawl", false, "Spider web application and run XSS engine on endpoints with parameters/forms")
 	flag.IntVar(&spiderDepth, "depth", 3, "Web crawler recursion depth (default: 3)")
 	flag.IntVar(&spiderMaxURLs, "max-urls", 50, "Max URLs to discover during spidering (default: 50)")
 	flag.BoolVar(&isShodan, "shodan", false, "Run Shodan OSINT intelligence reconnaissance on target IP/domain")
@@ -626,6 +627,36 @@ func main() {
 		}
 	}
 
+	xssCfg := xss.DefaultEngineConfig()
+	xssCfg.EnableDOM = enableDOM
+	xssCfg.EnableDOMBrowser = enableDOMBrowser
+	xssCfg.EnableForms = enableForms
+	xssCfg.EnableStored = enableStored
+	xssCfg.FuzzMode = xssFuzz
+
+	// Crawl & Scan XSS Engine (--crawl)
+	if isCrawlXSS {
+		fmt.Printf("\033[36m[*] Spidering %s (depth=%d, max-urls=%d) to discover endpoints for XSS engine...\033[0m\n", rawURL, spiderDepth, spiderMaxURLs)
+		crawlFindings, err := RunCrawlAndScanXSS(rawURL, spiderDepth, spiderMaxURLs, xssCfg, httpClient, parsedHeaders)
+		if err != nil {
+			fmt.Printf("\033[31m[!] Crawl error: %v\033[0m\n", err)
+			os.Exit(1)
+		}
+		if len(crawlFindings) == 0 {
+			fmt.Println("\033[32m[+] Crawl and XSS scan completed with 0 findings.\033[0m")
+		} else {
+			fmt.Printf("\033[32m[+] Crawl and XSS scan completed with %d finding(s)!\033[0m\n", len(crawlFindings))
+			for _, f := range crawlFindings {
+				fmt.Printf("    [%s] %s on %s (param: %s)\n", f.ConfidenceLevel, f.Title, f.URL, f.Parameter)
+			}
+			if output != "" {
+				_ = reporters.WriteMarkdownReport(&modules.Target{URL: rawURL, Method: "GET"}, crawlFindings, output+".md")
+				_ = reporters.WriteJSONReport(&modules.Target{URL: rawURL, Method: "GET"}, crawlFindings, output+".json")
+			}
+		}
+		return
+	}
+
 	// Parameter Discovery (Arjun-style)
 	if discoverParams {
 		if wordlist == "" {
@@ -735,12 +766,6 @@ func main() {
 		sqliModule.DefaultDelay = sqliDelaySec
 	}
 
-	xssCfg := xss.DefaultEngineConfig()
-	xssCfg.EnableDOM = enableDOM
-	xssCfg.EnableDOMBrowser = enableDOMBrowser
-	xssCfg.EnableForms = enableForms
-	xssCfg.EnableStored = enableStored
-	xssCfg.FuzzMode = xssFuzz
 	xssModule := modules.NewXSSModuleWithConfig(xssCfg)
 
 	availableModules := map[string]modules.Module{
@@ -827,3 +852,108 @@ func main() {
 	}
 	fmt.Println(strings.Repeat("=", 60))
 }
+
+// RunCrawlAndScanXSS spiders the target application and executes the XSS module on discovered URLs with parameters or forms.
+func RunCrawlAndScanXSS(targetURL string, depth, maxURLs int, xssCfg *xss.EngineConfig, c *client.Client, customHeaders map[string]string) ([]*modules.Finding, error) {
+	sp, err := sitemap.NewSpider(targetURL, depth, maxURLs)
+	if err != nil {
+		return nil, fmt.Errorf("spider init failed: %w", err)
+	}
+	sm := sp.Crawl()
+
+	var targets []*modules.Target
+	seenURLs := make(map[string]bool)
+
+	for _, ep := range sm.Endpoints {
+		u, errParse := url.Parse(ep.URL)
+		if errParse != nil {
+			continue
+		}
+
+		// 1. Query parameters
+		q := u.Query()
+		if len(q) > 0 {
+			params := make(map[string]string)
+			for k, v := range q {
+				if len(v) > 0 {
+					params[k] = v[0]
+				} else {
+					params[k] = "test"
+				}
+			}
+			cleanURL := fmt.Sprintf("%s://%s%s", u.Scheme, u.Host, u.Path)
+			tKey := "GET:" + cleanURL + "?" + u.RawQuery
+			if !seenURLs[tKey] {
+				seenURLs[tKey] = true
+				targets = append(targets, &modules.Target{
+					URL:     cleanURL,
+					Method:  "GET",
+					Params:  params,
+					Headers: customHeaders,
+				})
+			}
+		}
+
+		// 2. Forms
+		for _, form := range ep.Forms {
+			formAction := form.Action
+			if formAction == "" {
+				formAction = ep.URL
+			} else if strings.HasPrefix(formAction, "/") {
+				base, _ := url.Parse(ep.URL)
+				if base != nil {
+					formAction = fmt.Sprintf("%s://%s%s", base.Scheme, base.Host, formAction)
+				}
+			}
+			fMethod := "POST"
+			if strings.EqualFold(form.Method, "GET") {
+				fMethod = "GET"
+			}
+			inputs := make(map[string]string)
+			for _, inp := range form.Inputs {
+				inputs[inp] = "test"
+			}
+			if len(inputs) > 0 {
+				tKey := fMethod + ":" + formAction
+				if !seenURLs[tKey] {
+					seenURLs[tKey] = true
+					if fMethod == "POST" {
+						targets = append(targets, &modules.Target{
+							URL:     formAction,
+							Method:  "POST",
+							Data:    inputs,
+							Headers: customHeaders,
+						})
+					} else {
+						targets = append(targets, &modules.Target{
+							URL:     formAction,
+							Method:  "GET",
+							Params:  inputs,
+							Headers: customHeaders,
+						})
+					}
+				}
+			}
+		}
+	}
+
+	if len(targets) == 0 {
+		fmt.Println("[*] Notice: No URLs with parameters or forms found during crawl.")
+		return nil, nil
+	}
+
+	fmt.Printf("[+] Crawl discovered %d testable target endpoint(s) with parameters/forms. Running XSS engine...\n", len(targets))
+
+	xssMod := modules.NewXSSModuleWithConfig(xssCfg)
+	var allFindings []*modules.Finding
+
+	for _, t := range targets {
+		fList, errScan := xssMod.Run(t, c)
+		if errScan == nil && len(fList) > 0 {
+			allFindings = append(allFindings, fList...)
+		}
+	}
+
+	return allFindings, nil
+}
+
