@@ -2,6 +2,7 @@ package modules
 
 import (
 	"fmt"
+	"net/url"
 	"nightfalllx/pkg/client"
 	"strings"
 )
@@ -50,11 +51,10 @@ func (m *HostHeaderModule) Run(target *Target, c *client.Client) ([]*Finding, er
 			if len(evidence) > 200 {
 				evidence = evidence[:200]
 			}
-			findings = append(findings, &Finding{
+			f := &Finding{
 				Module:      m.Name(),
 				Title:       "Host Header Injection (Redirect Poisoning via Location Header)",
 				Severity:    SeverityHigh,
-				Confidence:  100,
 				URL:         target.URL,
 				Parameter:   th.HeaderName,
 				Payload:     fmt.Sprintf("%s: %s", th.HeaderName, th.HeaderValue),
@@ -62,7 +62,21 @@ func (m *HostHeaderModule) Run(target *Target, c *client.Client) ([]*Finding, er
 				Evidence:    fmt.Sprintf("Location: %s", evidence),
 				Remediation: "Do not trust X-Forwarded-Host or raw Host headers for generating absolute redirect URLs; use a fixed server configuration base URL.",
 				CWEID:       74,
-			})
+			}
+			parsedLoc, parseErr := url.Parse(location)
+			locHost := ""
+			if parseErr == nil {
+				locHost = parsedLoc.Hostname()
+				if locHost == "" && strings.HasPrefix(location, "//") {
+					locHost = strings.Split(strings.TrimPrefix(location, "//"), "/")[0]
+				}
+			}
+			if locHost == canary || (parseErr == nil && parsedLoc.Host == canary) {
+				f.SetConfidence(ConfidenceConfirmed)
+			} else {
+				f.SetConfidence(ConfidenceProbable)
+			}
+			findings = append(findings, f)
 			break
 		}
 
@@ -79,11 +93,10 @@ func (m *HostHeaderModule) Run(target *Target, c *client.Client) ([]*Finding, er
 			}
 			evidence := resp.Body[start:end]
 
-			findings = append(findings, &Finding{
+			f := &Finding{
 				Module:      m.Name(),
 				Title:       "Host Header Reflection in Response Body (Link Poisoning)",
 				Severity:    SeverityMedium,
-				Confidence:  95,
 				URL:         target.URL,
 				Parameter:   th.HeaderName,
 				Payload:     fmt.Sprintf("%s: %s", th.HeaderName, th.HeaderValue),
@@ -91,7 +104,9 @@ func (m *HostHeaderModule) Run(target *Target, c *client.Client) ([]*Finding, er
 				Evidence:    evidence,
 				Remediation: "Validate the Host header against a whitelist of authorized domains and avoid relying on incoming headers for generating resource links.",
 				CWEID:       74,
-			})
+			}
+			f.SetConfidence(ConfidenceProbable)
+			findings = append(findings, f)
 			break
 		}
 	}

@@ -49,11 +49,10 @@ func (m *HeadersModule) Run(target *Target, c *client.Client) ([]*Finding, error
 
 	for _, mh := range missingHeaders {
 		if headers.Get(mh.Header) == "" {
-			findings = append(findings, &Finding{
+			f := &Finding{
 				Module:      m.Name(),
 				Title:       mh.Title,
 				Severity:    mh.Severity,
-				Confidence:  100,
 				URL:         target.URL,
 				Parameter:   mh.Header,
 				Payload:     "N/A (Header Check)",
@@ -61,17 +60,18 @@ func (m *HeadersModule) Run(target *Target, c *client.Client) ([]*Finding, error
 				Evidence:    fmt.Sprintf("Header %s is omitted in response from %s", mh.Header, target.URL),
 				Remediation: mh.Remediation,
 				CWEID:       mh.CWE,
-			})
+			}
+			f.SetConfidence(ConfidencePossible)
+			findings = append(findings, f)
 		}
 	}
 
 	// HSTS on HTTPS targets
 	if strings.HasPrefix(strings.ToLower(target.URL), "https://") && headers.Get("Strict-Transport-Security") == "" {
-		findings = append(findings, &Finding{
+		f := &Finding{
 			Module:      m.Name(),
 			Title:       "Missing HTTP Strict-Transport-Security (HSTS) Header",
 			Severity:    SeverityMedium,
-			Confidence:  100,
 			URL:         target.URL,
 			Parameter:   "Strict-Transport-Security",
 			Payload:     "N/A",
@@ -79,18 +79,19 @@ func (m *HeadersModule) Run(target *Target, c *client.Client) ([]*Finding, error
 			Evidence:    "Strict-Transport-Security header omitted",
 			Remediation: "Set 'Strict-Transport-Security: max-age=31536000; includeSubDomains' to enforce encrypted transport.",
 			CWEID:       319,
-		})
+		}
+		f.SetConfidence(ConfidencePossible)
+		findings = append(findings, f)
 	}
 
 	// 2. Verbose Server / Technology Version Disclosure
 	for _, bannerHeader := range []string{"Server", "X-Powered-By", "X-AspNet-Version", "X-Runtime"} {
 		if val := headers.Get(bannerHeader); val != "" {
 			if versionDisclosureRegex.MatchString(val) {
-				findings = append(findings, &Finding{
+				f := &Finding{
 					Module:      m.Name(),
 					Title:       fmt.Sprintf("Software Version Disclosure via '%s' Header", bannerHeader),
 					Severity:    SeverityLow,
-					Confidence:  100,
 					URL:         target.URL,
 					Parameter:   bannerHeader,
 					Payload:     val,
@@ -98,7 +99,9 @@ func (m *HeadersModule) Run(target *Target, c *client.Client) ([]*Finding, error
 					Evidence:    fmt.Sprintf("%s: %s", bannerHeader, val),
 					Remediation: "Remove or mask detailed software version banners in web server configuration.",
 					CWEID:       200,
-				})
+				}
+				f.SetConfidence(ConfidenceProbable)
+				findings = append(findings, f)
 			}
 		}
 	}
@@ -119,11 +122,10 @@ func (m *HeadersModule) Run(target *Target, c *client.Client) ([]*Finding, error
 
 		if len(missingFlags) > 0 {
 			cookieName := strings.Split(cookie, "=")[0]
-			findings = append(findings, &Finding{
+			f := &Finding{
 				Module:      m.Name(),
 				Title:       fmt.Sprintf("Insecure Cookie Flags on '%s'", cookieName),
 				Severity:    SeverityLow,
-				Confidence:  100,
 				URL:         target.URL,
 				Parameter:   cookieName,
 				Payload:     cookie,
@@ -131,7 +133,9 @@ func (m *HeadersModule) Run(target *Target, c *client.Client) ([]*Finding, error
 				Evidence:    cookie,
 				Remediation: "Configure all sensitive cookies with Secure, HttpOnly, and SameSite=Lax/Strict flags.",
 				CWEID:       614,
-			})
+			}
+			f.SetConfidence(ConfidenceProbable)
+			findings = append(findings, f)
 		}
 	}
 

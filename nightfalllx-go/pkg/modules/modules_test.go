@@ -141,6 +141,25 @@ func TestCORSModule(t *testing.T) {
 	if len(findings) == 0 {
 		t.Fatalf("expected CORS finding, got none")
 	}
+	if findings[0].ConfidenceLevel != ConfidenceConfirmed {
+		t.Errorf("expected confirmed CORS finding, got %s", findings[0].ConfidenceLevel)
+	}
+
+	// Negative test: static page without CORS headers
+	cleanTs := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		w.Write([]byte("<html><body>Static safe page</body></html>"))
+	}))
+	defer cleanTs.Close()
+
+	cleanTarget := &Target{URL: cleanTs.URL, Method: "GET"}
+	cleanFindings, err := mod.Run(cleanTarget, c)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(cleanFindings) != 0 {
+		t.Errorf("expected 0 findings on static page, got %d", len(cleanFindings))
+	}
 }
 
 func TestRedirectModule(t *testing.T) {
@@ -169,6 +188,29 @@ func TestRedirectModule(t *testing.T) {
 
 	if len(findings) == 0 {
 		t.Fatalf("expected Open Redirect finding, got none")
+	}
+	if findings[0].ConfidenceLevel != ConfidenceConfirmed {
+		t.Errorf("expected confirmed redirect finding, got %s", findings[0].ConfidenceLevel)
+	}
+
+	// Negative test: static page with normal 200 response
+	cleanTs := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		w.Write([]byte("<html><body>Safe static page</body></html>"))
+	}))
+	defer cleanTs.Close()
+
+	cleanTarget := &Target{
+		URL:    cleanTs.URL,
+		Method: "GET",
+		Params: map[string]string{"page": "home"},
+	}
+	cleanFindings, err := mod.Run(cleanTarget, c)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(cleanFindings) != 0 {
+		t.Errorf("expected 0 findings on static clean page, got %d", len(cleanFindings))
 	}
 }
 
@@ -436,6 +478,18 @@ func TestHeadersModule(t *testing.T) {
 		t.Fatalf("expected security header findings, got none")
 	}
 
+	for _, f := range findings {
+		if strings.HasPrefix(f.Title, "Missing ") {
+			if f.ConfidenceLevel != ConfidencePossible {
+				t.Errorf("expected possible confidence for %s, got %s", f.Title, f.ConfidenceLevel)
+			}
+		} else {
+			if f.ConfidenceLevel != ConfidenceProbable {
+				t.Errorf("expected probable confidence for %s, got %s", f.Title, f.ConfidenceLevel)
+			}
+		}
+	}
+
 	// Negative fixture: Fully hardened headers
 	hardenedTs := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Security-Policy", "default-src 'self'")
@@ -520,6 +574,9 @@ func TestHostHeaderModule(t *testing.T) {
 	}
 	if len(findings) == 0 {
 		t.Fatalf("expected Host Header finding, got none")
+	}
+	if findings[0].ConfidenceLevel != ConfidenceConfirmed {
+		t.Errorf("expected confirmed confidence for hostheader redirect, got %s", findings[0].ConfidenceLevel)
 	}
 
 	// Negative fixture: Safe server that uses fixed domain

@@ -51,11 +51,10 @@ func (m *CORSModule) Run(target *Target, c *client.Client) ([]*Finding, error) {
 
 		// Vulnerable case 1: Origin reflected + credentials allowed
 		if (acao == item.Origin || acao == "*") && acac == "true" {
-			findings = append(findings, &Finding{
+			f := &Finding{
 				Module:      m.Name(),
 				Title:       fmt.Sprintf("CORS Misconfiguration (Creds Allowed with %s)", item.Label),
 				Severity:    SeverityHigh,
-				Confidence:  100,
 				URL:         target.URL,
 				Parameter:   "Header: Origin",
 				Payload:     fmt.Sprintf("Origin: %s", item.Origin),
@@ -63,17 +62,22 @@ func (m *CORSModule) Run(target *Target, c *client.Client) ([]*Finding, error) {
 				Evidence:    fmt.Sprintf("ACAO: %s, ACAC: %s", acao, acac),
 				Remediation: "Implement an allowlist of trusted origins. Never dynamically reflect untrusted origins with Access-Control-Allow-Credentials: true.",
 				CWEID:       942,
-			})
+			}
+			if acao == item.Origin && acac == "true" {
+				f.SetConfidence(ConfidenceConfirmed)
+			} else {
+				f.SetConfidence(ConfidenceProbable)
+			}
+			findings = append(findings, f)
 			break
 		}
 
 		// Vulnerable case 2: Origin null trusted
 		if item.Origin == "null" && acao == "null" {
-			findings = append(findings, &Finding{
+			f := &Finding{
 				Module:      m.Name(),
 				Title:       "CORS Misconfiguration (Null Origin Allowed)",
 				Severity:    SeverityMedium,
-				Confidence:  90,
 				URL:         target.URL,
 				Parameter:   "Header: Origin",
 				Payload:     "Origin: null",
@@ -81,7 +85,9 @@ func (m *CORSModule) Run(target *Target, c *client.Client) ([]*Finding, error) {
 				Evidence:    fmt.Sprintf("ACAO: %s", acao),
 				Remediation: "Disallow the 'null' origin in CORS configuration.",
 				CWEID:       942,
-			})
+			}
+			f.SetConfidence(ConfidenceProbable)
+			findings = append(findings, f)
 			break
 		}
 	}

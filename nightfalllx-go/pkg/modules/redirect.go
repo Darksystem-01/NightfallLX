@@ -137,11 +137,10 @@ func (m *RedirectModule) Run(target *Target, c *client.Client) ([]*Finding, erro
 			if loc != "" {
 				u, parseErr := url.Parse(loc)
 				if parseErr == nil && (strings.HasPrefix(loc, "//example.com") || (u.Host == "example.com" || strings.HasSuffix(u.Host, ".example.com"))) {
-					findings = append(findings, &Finding{
+					f := &Finding{
 						Module:      m.Name(),
 						Title:       "Open URL Redirection",
 						Severity:    SeverityMedium,
-						Confidence:  100,
 						URL:         target.URL,
 						Parameter:   param,
 						Payload:     payload,
@@ -149,7 +148,18 @@ func (m *RedirectModule) Run(target *Target, c *client.Client) ([]*Finding, erro
 						Evidence:    fmt.Sprintf("HTTP %d, Location header: %s", resp.StatusCode, loc),
 						Remediation: "Validate redirect targets against an internal relative path allowlist or strictly trusted domain list.",
 						CWEID:       601,
-					})
+					}
+					canaryHost := "example.com"
+					locHost := u.Hostname()
+					if locHost == "" && strings.HasPrefix(loc, "//") {
+						locHost = strings.Split(strings.TrimPrefix(loc, "//"), "/")[0]
+					}
+					if locHost == canaryHost || u.Host == canaryHost {
+						f.SetConfidence(ConfidenceConfirmed)
+					} else {
+						f.SetConfidence(ConfidenceProbable)
+					}
+					findings = append(findings, f)
 					break
 				}
 			}
