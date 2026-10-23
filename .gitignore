@@ -38,8 +38,12 @@ lab_server.py
 nightfalllx
 nightfalllx.exe
 lab_report.*
+lab_report.md
+lab_report.json
 .intel_cache/
 *.intel_cache/
 lab_output/
+docs/*_output*
 *.test
 *.out
+nightfalllx-go.zip

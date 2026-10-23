@@ -1,9 +1,7 @@
 # Architecture & Engineering Decisions
 
 ## 1. Project License & Attribution
-- **Repository License:** `MIT License`
-- **Copyright:** `Copyright (c) 2026 VAPF contributors`
-- **License Terms:** Permissive MIT License allowing free use, modification, distribution, and sublicensing with copyright notice preservation.
+- **Repository License:** License file missing from repo; MIT claim unverified until the owner adds it.
 - **Third-Party Attribution & Source Integrity:**
   - The native Go XSS detection engine (`pkg/xss`) is designed and implemented from first principles in idiomatic Go. No third-party code is translated line-by-line.
   - All test vectors and character probes are authored as short, deterministic marker-based strings using safe canaries (e.g. `alert(1)`, unique random tokens `lxcanary...`).
