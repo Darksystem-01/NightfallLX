@@ -97,7 +97,7 @@ All 10 scenarios passed:
 6. `DOM_Hash_Static_Analysis`: Verified probable finding tracking `location.hash` -> `innerHTML`.
 7. `Stored_Comment_Form`: Verified stored finding with persistent canary notice and CSRF token refresh.
 8. `Filter_Bypass_Script_Blocked`: Verified filter bypass via `<img onerror=...>` when `<script>` is stripped.
-9. `Intel_Banner_PHP_3_4_5`: Verified extraction of `Server: PHP/3.4.5` and correlation with Exploit-DB/CVE-1999-0001 in dedicated report section.
+9. `Intel_Banner_FakeProduct_0_0_1`: Verified banner extraction of `Server: FakeProduct/0.0.1` and parsing with fictional Exploit-DB mock fixture (`CVE-0000-0000`) in dedicated report section. Note: Real searchsploit output was not tested in unit tests; all test fixtures are strictly fictional and not verified findings.
 10. `Clean_Static_Page_Zero_Findings`: Verified exactly **zero findings** across all modules on the clean static page.
 
 ---

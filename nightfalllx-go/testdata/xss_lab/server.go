@@ -217,21 +217,21 @@ func (s *LabServer) routes() {
 </html>`, filtered)
 	})
 
-	// 9. Legacy Banner returning Server: PHP/3.4.5
+	// 9. Legacy Banner returning Server: FakeProduct/0.0.1
 	s.mux.HandleFunc("/intel/banner", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Server", "PHP/3.4.5")
-		w.Header().Set("X-Powered-By", "PHP/3.4.5")
+		w.Header().Set("Server", "FakeProduct/0.0.1")
+		w.Header().Set("X-Powered-By", "FakeProduct/0.0.1")
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.WriteHeader(http.StatusOK)
 		fmt.Fprint(w, `<!DOCTYPE html>
 <html>
 <head>
   <title>Legacy Corporate Intranet</title>
-  <meta name="generator" content="PHP/3.4.5">
+  <meta name="generator" content="FakeProduct/0.0.1">
 </head>
 <body>
   <h1>Internal Management Portal</h1>
-  <p>System operational on PHP 3.4.5 platform.</p>
+  <p>System operational on FakeProduct 0.0.1 platform.</p>
 </body>
 </html>`)
 	})

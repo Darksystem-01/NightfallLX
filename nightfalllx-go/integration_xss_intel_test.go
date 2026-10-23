@@ -269,8 +269,8 @@ func TestXSSAndIntelIntegrationLab(t *testing.T) {
 		}
 	})
 
-	// 9. Legacy Banner PHP/3.4.5 & Version-Matched Reference Lookup
-	t.Run("Intel_Banner_PHP_3_4_5", func(t *testing.T) {
+	// 9. Legacy Banner FakeProduct/0.0.1 & Version-Matched Reference Lookup
+	t.Run("Intel_Banner_FakeProduct_0_0_1", func(t *testing.T) {
 		bannerURL := ts.URL + "/intel/banner"
 		resp, err := c.Get(bannerURL)
 		if err != nil {
@@ -279,21 +279,21 @@ func TestXSSAndIntelIntegrationLab(t *testing.T) {
 
 		pvList := intel.ExtractProductVersions(nil, resp.Headers, resp.Body, "")
 		if len(pvList) == 0 {
-			t.Fatalf("expected product version extraction from PHP/3.4.5, got 0")
+			t.Fatalf("expected product version extraction from FakeProduct/0.0.1, got 0")
 		}
 
-		hasPHP := false
+		hasFakeProduct := false
 		for _, b := range pvList {
-			if strings.EqualFold(b.Product, "PHP") && strings.HasPrefix(b.Version, "3.4.5") {
-				hasPHP = true
+			if strings.EqualFold(b.Product, "FakeProduct") && strings.HasPrefix(b.Version, "0.0.1") {
+				hasFakeProduct = true
 				break
 			}
 		}
-		if !hasPHP {
-			t.Errorf("expected PHP 3.4.5 banner detected, got %v", pvList)
+		if !hasFakeProduct {
+			t.Errorf("expected FakeProduct 0.0.1 banner detected, got %v", pvList)
 		}
 
-		// Mock searchsploit binary via PATH
+		// Mock searchsploit binary via PATH using fictional fixture
 		tmpDir := t.TempDir()
 		fakeSearchsploit := filepath.Join(tmpDir, "searchsploit")
 		scriptContent := `#!/bin/sh
@@ -301,13 +301,13 @@ cat << 'EOF'
 {
   "RESULTS_EXPLOIT": [
     {
-      "Title": "PHP 3.4.5 - Remote Code Execution (CVE-1999-0001)",
-      "EDB-ID": "12345",
-      "Date_Published": "1999-01-01",
+      "Title": "FakeProduct 0.0.1 - Remote Code Execution (CVE-0000-0000)",
+      "EDB-ID": "99999",
+      "Date_Published": "2000-01-01",
       "Author": "Security Researcher",
       "Type": "remote",
       "Platform": "multiple",
-      "Path": "/opt/exploitdb/exploits/multiple/remote/12345.txt"
+      "Path": "/opt/exploitdb/exploits/multiple/remote/99999.txt"
     }
   ]
 }
@@ -327,22 +327,22 @@ EOF
 		}
 
 		if len(intelReport.Findings) == 0 {
-			t.Fatalf("expected version-matched intel findings for PHP 3.4.5, got 0")
+			t.Fatalf("expected version-matched intel findings for FakeProduct 0.0.1, got 0")
 		}
 
 		finding := intelReport.Findings[0]
-		if finding.EDBID != "12345" {
-			t.Errorf("expected EDB-ID 12345, got %s", finding.EDBID)
+		if finding.EDBID != "99999" {
+			t.Errorf("expected EDB-ID 99999, got %s", finding.EDBID)
 		}
 		hasCVE := false
 		for _, cve := range finding.CVEs {
-			if cve == "CVE-1999-0001" {
+			if cve == "CVE-0000-0000" {
 				hasCVE = true
 				break
 			}
 		}
 		if !hasCVE {
-			t.Errorf("expected parsed CVE-1999-0001 in %v", finding.CVEs)
+			t.Errorf("expected parsed CVE-0000-0000 in %v", finding.CVEs)
 		}
 
 		// Ensure report formatting includes Version-matched Intel section
@@ -358,7 +358,7 @@ EOF
 		if !strings.Contains(reportContent, "Version-matched intel (not verified)") {
 			t.Errorf("expected report section 'Version-matched intel (not verified)', got:\n%s", reportContent)
 		}
-		if !strings.Contains(reportContent, "12345") || !strings.Contains(reportContent, "CVE-1999-0001") {
+		if !strings.Contains(reportContent, "99999") || !strings.Contains(reportContent, "CVE-0000-0000") {
 			t.Errorf("expected exploit metadata in report:\n%s", reportContent)
 		}
 	})

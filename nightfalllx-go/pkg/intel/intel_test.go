@@ -22,10 +22,13 @@ func TestQueryValidation(t *testing.T) {
 
 	invalid := []string{
 		"-h",
+		"-x",
 		"--version",
 		"php; id",
+		"php;id",
 		"apache | whoami",
 		"test`cat /etc/passwd`",
+		"12345678901234567890123456789012345678901234567890123456789012345", // exactly 65 chars
 		"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", // > 64 chars
 		"",
 	}
