@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 )
@@ -198,3 +199,30 @@ func TestExtractProductVersions(t *testing.T) {
 		t.Errorf("expected nginx 1.18.0 from manual query, got %v", foundMap["nginx"])
 	}
 }
+
+func TestRealSearchsploitOptional(t *testing.T) {
+	if os.Getenv("NFLX_REAL_SEARCHSPLOIT") != "1" {
+		t.Skip("skipping real searchsploit test; set NFLX_REAL_SEARCHSPLOIT=1 to enable")
+	}
+	if _, err := exec.LookPath("searchsploit"); err != nil {
+		t.Skip("searchsploit binary not found on PATH")
+	}
+
+	client := NewSearchsploitClient()
+	findings, err := client.Lookup("php", "3.4.5")
+	if err != nil {
+		t.Fatalf("Lookup failed for php 3.4.5 with real searchsploit: %v", err)
+	}
+
+	if len(findings) == 0 {
+		t.Logf("real searchsploit returned 0 findings (parseable empty slice)")
+	} else {
+		for i, f := range findings {
+			if f.Title == "" && f.EDBID == "" {
+				t.Errorf("finding %d has neither Title nor EDB-ID: %+v", i, f)
+			}
+		}
+		t.Logf("real searchsploit returned %d parseable findings", len(findings))
+	}
+}
+

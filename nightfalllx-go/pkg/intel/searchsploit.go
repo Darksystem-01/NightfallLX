@@ -41,7 +41,7 @@ func NewSearchsploitClient() *SearchsploitClient {
 	}
 	return &SearchsploitClient{
 		BinPath: bin,
-		Timeout: 10 * time.Second,
+		Timeout: 30 * time.Second,
 	}
 }
 
