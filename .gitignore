@@ -37,13 +37,14 @@ scan_plan.md
 lab_server.py
 nightfalllx
 nightfalllx.exe
+# Reports, intel cache & documentation test outputs
 lab_report.*
 lab_report.md
 lab_report.json
 .intel_cache/
 *.intel_cache/
-lab_output/
 docs/*_output*
+lab_output/
 *.test
 *.out
 nightfalllx-go.zip
