@@ -103,6 +103,8 @@ func main() {
 		spiderDepth    int
 		spiderMaxURLs  int
 		isInteractive  bool
+		targetListFile string
+		enableSPA      bool
 		headersFlag    arrayFlags
 		headers2Flag   arrayFlags
 		cookie2        string
@@ -171,6 +173,8 @@ func main() {
 
 	// Target & Input
 	flag.StringVar(&rawURL, "u", "", "Target URL or template (e.g. http://10.129.x.x/FUZZ or http://target.lab/?id=1)")
+	flag.StringVar(&targetListFile, "l", "", "Path to file containing list of target URLs for batch scanning (one URL per line)")
+	flag.StringVar(&targetListFile, "list", "", "Alias for -l")
 	flag.StringVar(&rawReqFile, "r", "", "Burp Suite raw HTTP request file (e.g. -r request.txt)")
 	flag.StringVar(&domain, "domain", "", "Domain for subdomain discovery / VHost fuzzing (e.g. -domain target.lab)")
 	flag.BoolVar(&isHTTPS, "https", false, "Force HTTPS scheme (useful with -r or raw domain)")
@@ -249,6 +253,7 @@ func main() {
 	flag.BoolVar(&isCrawlXSS, "crawl", false, "Spider web application and run XSS engine on endpoints with parameters/forms")
 	flag.IntVar(&spiderDepth, "depth", 3, "Web crawler recursion depth (default: 3)")
 	flag.IntVar(&spiderMaxURLs, "max-urls", 50, "Max URLs to discover during spidering (default: 50)")
+	flag.BoolVar(&enableSPA, "spa", false, "Enable headless Chrome SPA rendering & client-side route discovery in crawler")
 	flag.BoolVar(&isShodan, "shodan", false, "Run Shodan OSINT intelligence reconnaissance on target IP/domain")
 	flag.StringVar(&shodanKey, "shodan-key", "", "Shodan API Key (optional, defaults to SHODAN_API_KEY env)")
 
@@ -303,10 +308,13 @@ func main() {
               NightfallLX (Go Edition v2.1) - Offensive Assessment Engine`)
 		fmt.Println("\nUsage:")
 		fmt.Println("  nightfalllx -u <URL> [options]")
+		fmt.Println("  nightfalllx -l <targets.txt> [options]")
 		fmt.Println("  nightfalllx -r <request.txt> [options]")
 		fmt.Println("  nightfalllx -u <URL>/FUZZ -w <wordlist.txt> [fuzzing options]")
 		fmt.Println("  nightfalllx -domain <target.lab> -w <subdomains.txt> [subdomain options]")
 		fmt.Println("\nExamples:")
+		fmt.Println("  nightfalllx -l targets.txt -m sqli,xss -o batch_report")
+		fmt.Println("  nightfalllx -u http://target.lab/ -map -spa")
 		fmt.Println("  nightfalllx -u http://target.lab/?id=1 -m sqli,lfi -scope target.lab")
 		fmt.Println("  nightfalllx -u http://target.lab/api/user -d '{\"id\":1}' -json -m sqli,idor")
 		fmt.Println("  nightfalllx -u http://target.lab/ -discover-params -w /path/to/params.txt")
@@ -346,6 +354,17 @@ func main() {
 		}
 		fmt.Printf("\033[32m[+] Profile saved to %s\033[0m\n", path)
 		return
+	}
+
+	if targetListFile != "" {
+		code := runTargetList(ctx, multiTargetOptions{
+			Path:          targetListFile,
+			BaseOutput:    output,
+			LogFile:       logFile,
+			NoUpdateCheck: noUpdateCheck,
+			Args:          os.Args[1:],
+		})
+		os.Exit(code)
 	}
 
 	if noDOM {
@@ -538,6 +557,7 @@ func main() {
 			fmt.Printf("\033[31m[!] Spider init failed: %v\033[0m\n", err)
 			os.Exit(1)
 		}
+		sp.EnableSPA = enableSPA
 		sp.SetContext(ctx)
 		sp.Limiter = globalLimiter
 		sm := sp.Crawl()
@@ -737,7 +757,7 @@ func main() {
 	// Crawl & Scan XSS Engine (--crawl)
 	if isCrawlXSS {
 		fmt.Printf("\033[36m[*] Spidering %s (depth=%d, max-urls=%d) to discover endpoints for XSS engine...\033[0m\n", rawURL, spiderDepth, spiderMaxURLs)
-		crawlFindings, err := RunCrawlAndScanXSSWithContext(ctx, rawURL, spiderDepth, spiderMaxURLs, xssCfg, httpClient, parsedHeaders)
+		crawlFindings, err := RunCrawlAndScanXSSWithContextAndSPA(ctx, rawURL, spiderDepth, spiderMaxURLs, enableSPA, xssCfg, httpClient, parsedHeaders)
 		if err != nil {
 			fmt.Printf("\033[31m[!] Crawl error: %v\033[0m\n", err)
 			os.Exit(1)
@@ -1083,10 +1103,16 @@ func RunCrawlAndScanXSS(targetURL string, depth, maxURLs int, xssCfg *xss.Engine
 
 // RunCrawlAndScanXSSWithContext is the cancellable crawl-and-scan entry point.
 func RunCrawlAndScanXSSWithContext(ctx context.Context, targetURL string, depth, maxURLs int, xssCfg *xss.EngineConfig, c *client.Client, customHeaders map[string]string) ([]*modules.Finding, error) {
+	return RunCrawlAndScanXSSWithContextAndSPA(ctx, targetURL, depth, maxURLs, false, xssCfg, c, customHeaders)
+}
+
+// RunCrawlAndScanXSSWithContextAndSPA spiders the target application with optional SPA headless rendering and scans discovered endpoints.
+func RunCrawlAndScanXSSWithContextAndSPA(ctx context.Context, targetURL string, depth, maxURLs int, enableSPA bool, xssCfg *xss.EngineConfig, c *client.Client, customHeaders map[string]string) ([]*modules.Finding, error) {
 	sp, err := sitemap.NewSpider(targetURL, depth, maxURLs)
 	if err != nil {
 		return nil, fmt.Errorf("spider init failed: %w", err)
 	}
+	sp.EnableSPA = enableSPA
 	sp.SetContext(ctx)
 	if c != nil && c.Limiter != nil {
 		sp.Limiter = c.Limiter

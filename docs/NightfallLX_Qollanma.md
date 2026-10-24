@@ -304,6 +304,24 @@ Sayt bo'ylab krouler yuradi. Har bir aniqlangan parametr va HTML formalarni ajra
 nightfalllx --crawl -depth 2 -max-urls 30 -u http://target.lab/
 ```
 
+### 4.10 Ko'p nishonli massiv skanerlash (`-l` / `--list`)
+Hujjat yoki ro'yxat faylidan (masalan: `targets.txt`) bir nechta yoki yuzlab saytlarni o'qib, ularni xavfsiz va xotiradan toza holatda ketma-ket skanerlaydi.
+- Har bir nishon uchun alohida hisobot bazasi hosil qilinadi (`<output>-<host>.md`, `.json`, `.html`, `.sarif`).
+- Bo'sh qatorlar va izohlar (`#`) avtomatik tashlab ketiladi.
+- Jarayon tugagach, yakuniy muvaffaqiyat statistikasi ko'rsatiladi.
+```bash
+nightfalllx -l targets.txt -m sqli,xss -o batch_scan
+```
+
+### 4.11 SPA (Single Page Application) to'liq qo'llab-quvvatlash (`--spa`)
+Headless Chrome / Chromium orqali mijoz tomonida ishlovchi dynamic DOM ni to'liq renderlaydi.
+- React Router, Vue Router, Angular va hash-marshrutlarni (`path: "..."`, `to: "..."`, `href="#/..."`) aniqlaydi.
+- Standart statik HTML kroulerlari ko'ra olmaydigan dinamik veb sahifalarni 100% qamrab oladi.
+```bash
+nightfalllx -u http://target.lab/ -map -spa -depth 3
+nightfalllx -u http://target.lab/ -crawl -spa
+```
+
 ---
 
 ## 5. Vhost va subdomen qidirish
@@ -923,6 +941,8 @@ curl -i -s "http://target.htb/view.php?file=../../../../etc/passwd"
 | Flag | Turi | Standart qiymat | Tavsifi |
 |---|---|---|---|
 | `-u` | string | `""` | Nishon URL yoki shablon (masalan: `http://target.lab/?id=1` yoki `http://target/FUZZ`) |
+| `-l` | string | `""` | Ko'p nishonli ketma-ket skanerlash uchun URL lar ro'yxati fayli yo'li (har bir qatorda bitta URL) |
+| `-list` | string | `""` | `-l` bayrog'ining muqobil nomi |
 | `-r` | string | `""` | Burp Suite xom HTTP so'rov fayli yo'li |
 | `-domain` | string | `""` | Subdomen va VHost fuzzing uchun domen (masalan: `target.lab`) |
 | `-https` | bool | `false` | HTTPS sxemasini majburiy qo'llash |
@@ -1029,6 +1049,7 @@ curl -i -s "http://target.htb/view.php?file=../../../../etc/passwd"
 | `-spider` | bool | `false` | `-map` bayrog'ining muqobil nomi |
 | `-depth` | int | `3` | Krouler rekursiya chuqurligi |
 | `-max-urls` | int | `50` | Krouler topadigan maksimal URL soni |
+| `-spa` | bool | `false` | Headless Chrome orqali SPA (React/Vue/Angular) renderlash va marshrutlarni qidirish |
 | `-shodan` | bool | `false` | Shodan OSINT qidiruvi |
 | `-shodan-key` | string | `""` | Shodan API kaliti |
 | `-i` | bool | `false` | Interaktiv sichqoncha paneli (TUI) |

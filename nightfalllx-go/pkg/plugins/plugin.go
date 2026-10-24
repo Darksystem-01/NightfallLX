@@ -1,16 +1,13 @@
 // Package plugins loads optional NightfallLX extensions at runtime.
 //
-// The built-in loader uses Go's plugin package, which is supported on Linux,
-// FreeBSD, and macOS. Go does not provide runtime .so/.dll loading on Windows;
-// Windows users should build a platform-specific plugin host or loader.
+// The loader supports Go shared-object plugins (.so) on Linux/FreeBSD/macOS
+// and dynamic link libraries (.dll) with exported Execute/Name symbols on Windows.
 package plugins
 
 import (
-	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
-	"plugin"
 	"runtime"
 	"strings"
 )
@@ -72,33 +69,7 @@ func LoadAll(dir string) []Loaded {
 	return loaded
 }
 
-// LoadFile opens one shared object and resolves the exported Plugin symbol.
+// LoadFile opens one shared object (.so on Linux/macOS or .dll on Windows) and resolves the exported Plugin symbol.
 func LoadFile(path string) Loaded {
-	result := Loaded{Path: path}
-	if runtime.GOOS == "windows" {
-		result.Error = fmt.Errorf("Go's plugin package is not supported on Windows; build a Windows-specific .dll loader")
-		return result
-	}
-
-	shared, err := plugin.Open(path)
-	if err != nil {
-		result.Error = fmt.Errorf("open plugin: %w", err)
-		return result
-	}
-	symbol, err := shared.Lookup("Plugin")
-	if err != nil {
-		result.Error = fmt.Errorf("plugin does not export a 'Plugin' symbol: %w", err)
-		return result
-	}
-	instance, ok := symbol.(Plugin)
-	if !ok {
-		result.Error = fmt.Errorf("exported 'Plugin' symbol does not implement the NightfallLX Plugin interface")
-		return result
-	}
-	result.Plugin = instance
-	result.Name = strings.TrimSpace(instance.Name())
-	if result.Name == "" {
-		result.Name = strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
-	}
-	return result
+	return loadFilePlatform(path)
 }

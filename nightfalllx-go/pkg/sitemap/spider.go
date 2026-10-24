@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"os/exec"
 	"regexp"
 	"sort"
 	"strings"
@@ -50,16 +51,20 @@ type Spider struct {
 	Limiter    interface {
 		WaitContext(context.Context) error
 	}
-	ctx context.Context
-	mu  sync.Mutex
+	ctx        context.Context
+	mu         sync.Mutex
+	EnableSPA  bool
+	ChromePath string
 }
 
 var (
-	hrefRegex       = regexp.MustCompile(`(?i)(?:href|src|action)\s*=\s*["']([^"'>\s#]+)["']`)
-	inputRegex      = regexp.MustCompile(`(?i)<input[^>]+name\s*=\s*["']([^"']+)["']`)
-	formTagRegex    = regexp.MustCompile(`(?is)<form([^>]*)>(.*?)</form>`)
-	actionAttrRegex = regexp.MustCompile(`(?i)action\s*=\s*["']([^"']*)["']`)
-	methodAttrRegex = regexp.MustCompile(`(?i)method\s*=\s*["']([^"']*)["']`)
+	hrefRegex         = regexp.MustCompile(`(?i)(?:href|src|action)\s*=\s*["']([^"'>\s#]+)["']`)
+	inputRegex        = regexp.MustCompile(`(?i)<input[^>]+name\s*=\s*["']([^"']+)["']`)
+	formTagRegex      = regexp.MustCompile(`(?is)<form([^>]*)>(.*?)</form>`)
+	actionAttrRegex   = regexp.MustCompile(`(?i)action\s*=\s*["']([^"']*)["']`)
+	methodAttrRegex   = regexp.MustCompile(`(?i)method\s*=\s*["']([^"']*)["']`)
+	spaRouteRegex     = regexp.MustCompile(`(?i)(?:path|to|route)\s*[:=]\s*["'](/[a-zA-Z0-9_\-\/]+)["']`)
+	spaHashRouteRegex = regexp.MustCompile(`(?i)href\s*=\s*["']#(/[a-zA-Z0-9_\-\/]+)["']`)
 )
 
 // NewSpider creates a new recursive site crawler
@@ -79,13 +84,15 @@ func NewSpider(targetURL string, maxDepth, maxURLs int) (*Spider, error) {
 		maxURLs = 50
 	}
 
+	chromeBin := findChromeBinary()
 	return &Spider{
-		BaseURL:  parsed,
-		MaxDepth: maxDepth,
-		MaxURLs:  maxURLs,
-		Timeout:  10 * time.Second,
-		Visited:  make(map[string]bool),
-		ctx:      context.Background(),
+		BaseURL:    parsed,
+		MaxDepth:   maxDepth,
+		MaxURLs:    maxURLs,
+		Timeout:    10 * time.Second,
+		Visited:    make(map[string]bool),
+		ctx:        context.Background(),
+		ChromePath: chromeBin,
 		SiteMap: &SiteMap{
 			TargetHost: parsed.Host,
 			BaseURL:    targetURL,
@@ -114,6 +121,13 @@ func (s *Spider) SetContext(ctx context.Context) {
 // Crawl performs recursive spidering and builds the site map
 func (s *Spider) Crawl() *SiteMap {
 	fmt.Printf("\n\033[1;34m[*] Spanning Web Crawler & Full Site Mapper on: %s (Depth: %d, Max: %d)\033[0m\n", s.BaseURL.String(), s.MaxDepth, s.MaxURLs)
+	if s.EnableSPA {
+		if s.ChromePath != "" {
+			fmt.Printf("\033[1;35m[*] Single Page Application (SPA) Headless Engine: Enabled (%s)\033[0m\n", s.ChromePath)
+		} else {
+			fmt.Println("\033[33m[!] SPA Mode requested, but Chrome/Chromium not found. Falling back to HTTP crawl.\033[0m")
+		}
+	}
 	s.crawlURL(s.BaseURL.String(), 0)
 	s.SiteMap.TotalURLs = len(s.SiteMap.Endpoints)
 	return s.SiteMap
@@ -162,6 +176,14 @@ func (s *Spider) crawlURL(target string, depth int) {
 	bodyBytes := make([]byte, 128*1024) // Read up to 128KB
 	n, _ := resp.Body.Read(bodyBytes)
 	bodyStr := string(bodyBytes[:n])
+
+	// If SPA mode is enabled and Chrome is available, render page DOM to capture dynamic React/Vue/Angular routes
+	if s.EnableSPA && s.ChromePath != "" {
+		rendered, errSPA := s.renderSPADOM(target)
+		if errSPA == nil && len(rendered) > 0 {
+			bodyStr = bodyStr + "\n" + rendered
+		}
+	}
 
 	// Parameters
 	var params []string
@@ -238,6 +260,36 @@ func (s *Spider) crawlURL(target string, depth int) {
 				discoveredNext = append(discoveredNext, resolvedURL.String())
 			}
 			s.mu.Unlock()
+		}
+	}
+
+	// SPA Client-Side Route Discovery (React Router, Vue Router, Angular #/ routes)
+	if s.EnableSPA {
+		for _, m := range spaRouteRegex.FindAllStringSubmatch(bodyStr, -1) {
+			if len(m) > 1 {
+				link := strings.TrimSpace(m[1])
+				resolvedURL := s.resolveURL(parsedTarget, link)
+				if resolvedURL != nil && resolvedURL.Host == s.BaseURL.Host {
+					s.mu.Lock()
+					if !s.Visited[resolvedURL.String()] && len(s.SiteMap.Endpoints) < s.MaxURLs {
+						discoveredNext = append(discoveredNext, resolvedURL.String())
+					}
+					s.mu.Unlock()
+				}
+			}
+		}
+		for _, m := range spaHashRouteRegex.FindAllStringSubmatch(bodyStr, -1) {
+			if len(m) > 1 {
+				link := strings.TrimSpace(m[1])
+				resolvedURL := s.resolveURL(parsedTarget, link)
+				if resolvedURL != nil && resolvedURL.Host == s.BaseURL.Host {
+					s.mu.Lock()
+					if !s.Visited[resolvedURL.String()] && len(s.SiteMap.Endpoints) < s.MaxURLs {
+						discoveredNext = append(discoveredNext, resolvedURL.String())
+					}
+					s.mu.Unlock()
+				}
+			}
 		}
 	}
 
@@ -346,3 +398,41 @@ func unique(arr []string) []string {
 	}
 	return res
 }
+
+func (s *Spider) renderSPADOM(target string) (string, error) {
+	if s.ChromePath == "" {
+		return "", fmt.Errorf("chrome binary not available")
+	}
+
+	ctx := s.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	ctxTimeout, cancel := context.WithTimeout(ctx, 12*time.Second)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctxTimeout, s.ChromePath,
+		"--headless",
+		"--disable-gpu",
+		"--no-sandbox",
+		"--disable-dev-shm-usage",
+		"--virtual-time-budget=1500",
+		"--dump-dom",
+		target,
+	)
+	out, err := cmd.Output()
+	if err != nil {
+		return "", err
+	}
+	return string(out), nil
+}
+
+func findChromeBinary() string {
+	for _, bin := range []string{"chromium", "chromium-browser", "google-chrome", "chrome"} {
+		if path, err := exec.LookPath(bin); err == nil {
+			return path
+		}
+	}
+	return ""
+}
+
