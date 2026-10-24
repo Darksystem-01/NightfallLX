@@ -188,6 +188,8 @@ nightfalllx -u http://target.lab -m all -o reports/scan
 |---|---|---|---|
 | `-w` | string | `""` | Wordlist path |
 | `-fuzz` | bool | `false` | Explicitly enable fuzzing |
+| `-dir` | bool | `false` | Directory brute-forcing mode (`gobuster dir` compatible) |
+| `-x`, `-extensions`, `-e` | string | `""` | File extensions (e.g. `php,html,txt`) |
 | `-subdomain`, `-sub` | bool | `false` | Subdomain/VHost discovery |
 | `-t` | int | `40` | Concurrency workers |
 | `-ac` | bool | `true` | Auto-calibrate wildcard responses |
@@ -306,6 +308,11 @@ nightfalllx -u http://target.lab/upload -m upload
 ### Mode 3 — Fuzzing and VHosts
 
 ```bash
+# Directory brute-forcing (gobuster-compatible)
+nightfalllx dir -u http://target.lab/ \
+  -w /usr/share/seclists/Discovery/Web-Content/DirBuster-2007_directory-list-lowercase-2.3-medium.txt \
+  -x php,html,sql,js,txt
+
 # URL fuzzing
 nightfalllx -u 'http://target.lab/FUZZ' \
   -w /usr/share/seclists/Discovery/Web-Content/common.txt \

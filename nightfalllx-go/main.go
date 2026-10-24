@@ -134,6 +134,7 @@ func main() {
 		matchLinesRaw  string
 		filterLinesRaw string
 		isFuzz         bool
+		extensionsRaw  string
 		isSubdomain    bool
 		autoCalibrate  bool
 		timeoutSec     int
@@ -330,6 +331,10 @@ func main() {
 	flag.StringVar(&wordlist, "w", "", "Wordlist file path or auto-keyword (common, lfi, params, rockyou, 4digit, colors, cities, pins, users; default: auto-resolved)")
 	flag.IntVar(&threads, "t", 40, "Number of concurrent goroutine workers (default: 40)")
 	flag.BoolVar(&isFuzz, "fuzz", false, "Explicitly enable fast fuzzing mode")
+	flag.BoolVar(&isFuzz, "dir", false, "Directory & file brute-forcing mode (gobuster-compatible)")
+	flag.StringVar(&extensionsRaw, "x", "", "File extensions to test (comma-separated, e.g. php,html,txt)")
+	flag.StringVar(&extensionsRaw, "extensions", "", "Alias for -x")
+	flag.StringVar(&extensionsRaw, "e", "", "Alias for -x")
 	flag.BoolVar(&isSubdomain, "subdomain", false, "Enable Subdomain / VHost discovery mode (ffuf-style)")
 	flag.BoolVar(&isSubdomain, "sub", false, "Alias for --subdomain")
 	flag.BoolVar(&autoCalibrate, "ac", true, "Auto-calibrate baseline wildcard responses (default: true)")
@@ -359,8 +364,11 @@ func main() {
 		fmt.Println("  nightfalllx -l <targets.txt> [options]")
 		fmt.Println("  nightfalllx -r <request.txt> [options]")
 		fmt.Println("  nightfalllx -u <URL>/FUZZ -w <wordlist.txt> [fuzzing options]")
+		fmt.Println("  nightfalllx dir -u <URL> -w <wordlist.txt> -x php,html,txt [gobuster mode]")
 		fmt.Println("  nightfalllx -domain <target.lab> -w <subdomains.txt> [subdomain options]")
 		fmt.Println("\nExamples:")
+		fmt.Println("  nightfalllx dir -u http://172.17.0.2/ -w /usr/share/seclists/... -x php,html,txt")
+		fmt.Println("  nightfalllx -u http://target.lab/ -w common -x php,html,sql,js,txt")
 		fmt.Println("  nightfalllx -l targets.txt -m sqli,xss -o batch_report")
 		fmt.Println("  nightfalllx -u http://target.lab/ -devbuster -w routes.txt --hide-status 403,404")
 		fmt.Println("  nightfalllx -u http://target.lab/ -map -spa")
@@ -372,6 +380,11 @@ func main() {
 		fmt.Println()
 		flag.PrintDefaults()
 		os.Exit(0)
+	}
+
+	if len(os.Args) > 1 && os.Args[1] == "dir" {
+		isFuzz = true
+		os.Args = append(os.Args[:1], os.Args[2:]...)
 	}
 
 	flag.Parse()
@@ -710,7 +723,17 @@ func main() {
 		}
 	}
 
-	if isFuzz || hasFuzzKeyword || (wordlist != "" && len(parsedHeaders["Host"]) > 0 && strings.Contains(parsedHeaders["Host"], "FUZZ")) {
+	var parsedExtensions []string
+	if extensionsRaw != "" {
+		for _, ext := range strings.Split(extensionsRaw, ",") {
+			ext = strings.TrimSpace(ext)
+			if ext != "" {
+				parsedExtensions = append(parsedExtensions, ext)
+			}
+		}
+	}
+
+	if isFuzz || len(parsedExtensions) > 0 || hasFuzzKeyword || (wordlist != "" && len(parsedHeaders["Host"]) > 0 && strings.Contains(parsedHeaders["Host"], "FUZZ")) {
 		if cookie != "" && parsedHeaders["Cookie"] == "" {
 			parsedHeaders["Cookie"] = cookie
 		}
@@ -737,6 +760,7 @@ func main() {
 			Timeout:       time.Duration(timeoutSec) * time.Second,
 			Threads:       threads,
 			WordlistPath:  wordlist,
+			Extensions:    parsedExtensions,
 			AutoCalibrate: autoCalibrate,
 			MatchCodes:    parseCodes(matchCodesRaw),
 			FilterCodes:   parseCodes(filterCodeRaw),

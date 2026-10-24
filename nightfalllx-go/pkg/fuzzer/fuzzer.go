@@ -48,6 +48,7 @@ type Config struct {
 	FilterWords   map[int]bool
 	MatchLines    map[int]bool
 	FilterLines   map[int]bool
+	Extensions    []string
 }
 
 // DefaultLabWordlist is a general web discovery wordlist.
@@ -165,22 +166,50 @@ func NewFuzzer(cfg *Config) *Fuzzer {
 }
 
 func (f *Fuzzer) loadWords() ([]string, error) {
+	var words []string
+	var err error
 	if len(f.cfg.Wordlist) > 0 {
-		return f.cfg.Wordlist, nil
-	}
-	if f.cfg.IsSubdomain && f.cfg.WordlistPath == "" {
-		return DefaultSubdomainWordlist, nil
-	}
-	words, _, err := wordlists.Resolve(wordlists.CategoryCommon, f.cfg.WordlistPath)
-	if err != nil && f.cfg.WordlistPath != "" {
-		return nil, err
-	}
-	if len(words) == 0 {
-		if f.cfg.IsSubdomain {
-			return DefaultSubdomainWordlist, nil
+		words = f.cfg.Wordlist
+	} else if f.cfg.IsSubdomain && f.cfg.WordlistPath == "" {
+		words = DefaultSubdomainWordlist
+	} else {
+		words, _, err = wordlists.Resolve(wordlists.CategoryCommon, f.cfg.WordlistPath)
+		if err != nil && f.cfg.WordlistPath != "" {
+			return nil, err
 		}
-		return DefaultLabWordlist, nil
+		if len(words) == 0 {
+			if f.cfg.IsSubdomain {
+				words = DefaultSubdomainWordlist
+			} else {
+				words = DefaultLabWordlist
+			}
+		}
 	}
+
+	if len(f.cfg.Extensions) > 0 {
+		var expanded []string
+		for _, w := range words {
+			w = strings.TrimSpace(w)
+			if w == "" {
+				continue
+			}
+			// Base word (e.g. /admin or /api)
+			expanded = append(expanded, w)
+			// Appended extension variants (e.g. /admin.php, /admin.html)
+			for _, ext := range f.cfg.Extensions {
+				ext = strings.TrimSpace(ext)
+				if ext == "" {
+					continue
+				}
+				if !strings.HasPrefix(ext, ".") {
+					ext = "." + ext
+				}
+				expanded = append(expanded, w+ext)
+			}
+		}
+		words = expanded
+	}
+
 	return words, nil
 }
 
