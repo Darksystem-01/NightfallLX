@@ -1,6 +1,7 @@
 package sitemap
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -13,13 +14,13 @@ import (
 
 // DiscoveredEndpoint contains info about a discovered URL
 type DiscoveredEndpoint struct {
-	URL        string            `json:"url"`
-	Path       string            `json:"path"`
-	Method     string            `json:"method"`
-	StatusCode int               `json:"status_code"`
-	Parameters []string          `json:"parameters"`
-	Type       string            `json:"type"` // "page", "api", "script", "style", "form"
-	Forms      []FormInfo        `json:"forms,omitempty"`
+	URL        string     `json:"url"`
+	Path       string     `json:"path"`
+	Method     string     `json:"method"`
+	StatusCode int        `json:"status_code"`
+	Parameters []string   `json:"parameters"`
+	Type       string     `json:"type"` // "page", "api", "script", "style", "form"
+	Forms      []FormInfo `json:"forms,omitempty"`
 }
 
 // FormInfo holds discovered HTML form metadata
@@ -31,10 +32,10 @@ type FormInfo struct {
 
 // SiteMap holds the complete tree of discovered URLs
 type SiteMap struct {
-	TargetHost string                        `json:"target_host"`
-	BaseURL    string                        `json:"base_url"`
+	TargetHost string                         `json:"target_host"`
+	BaseURL    string                         `json:"base_url"`
 	Endpoints  map[string]*DiscoveredEndpoint `json:"endpoints"`
-	TotalURLs  int                           `json:"total_urls"`
+	TotalURLs  int                            `json:"total_urls"`
 }
 
 // Spider crawls target site to map its architecture
@@ -46,13 +47,17 @@ type Spider struct {
 	Visited    map[string]bool
 	SiteMap    *SiteMap
 	HTTPClient *http.Client
-	mu         sync.Mutex
+	Limiter    interface {
+		WaitContext(context.Context) error
+	}
+	ctx context.Context
+	mu  sync.Mutex
 }
 
 var (
-	hrefRegex   = regexp.MustCompile(`(?i)(?:href|src|action)\s*=\s*["']([^"'>\s#]+)["']`)
-	inputRegex  = regexp.MustCompile(`(?i)<input[^>]+name\s*=\s*["']([^"']+)["']`)
-	formTagRegex = regexp.MustCompile(`(?is)<form([^>]*)>(.*?)</form>`)
+	hrefRegex       = regexp.MustCompile(`(?i)(?:href|src|action)\s*=\s*["']([^"'>\s#]+)["']`)
+	inputRegex      = regexp.MustCompile(`(?i)<input[^>]+name\s*=\s*["']([^"']+)["']`)
+	formTagRegex    = regexp.MustCompile(`(?is)<form([^>]*)>(.*?)</form>`)
 	actionAttrRegex = regexp.MustCompile(`(?i)action\s*=\s*["']([^"']*)["']`)
 	methodAttrRegex = regexp.MustCompile(`(?i)method\s*=\s*["']([^"']*)["']`)
 )
@@ -80,6 +85,7 @@ func NewSpider(targetURL string, maxDepth, maxURLs int) (*Spider, error) {
 		MaxURLs:  maxURLs,
 		Timeout:  10 * time.Second,
 		Visited:  make(map[string]bool),
+		ctx:      context.Background(),
 		SiteMap: &SiteMap{
 			TargetHost: parsed.Host,
 			BaseURL:    targetURL,
@@ -97,6 +103,14 @@ func NewSpider(targetURL string, maxDepth, maxURLs int) (*Spider, error) {
 	}, nil
 }
 
+// SetContext sets the context used for crawl requests.
+func (s *Spider) SetContext(ctx context.Context) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	s.ctx = ctx
+}
+
 // Crawl performs recursive spidering and builds the site map
 func (s *Spider) Crawl() *SiteMap {
 	fmt.Printf("\n\033[1;34m[*] Spanning Web Crawler & Full Site Mapper on: %s (Depth: %d, Max: %d)\033[0m\n", s.BaseURL.String(), s.MaxDepth, s.MaxURLs)
@@ -107,6 +121,9 @@ func (s *Spider) Crawl() *SiteMap {
 
 func (s *Spider) crawlURL(target string, depth int) {
 	if depth > s.MaxDepth {
+		return
+	}
+	if s.ctx != nil && s.ctx.Err() != nil {
 		return
 	}
 
@@ -123,7 +140,20 @@ func (s *Spider) crawlURL(target string, depth int) {
 		return
 	}
 
-	resp, err := s.HTTPClient.Get(target)
+	ctx := s.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if s.Limiter != nil {
+		if err := s.Limiter.WaitContext(ctx); err != nil {
+			return
+		}
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
+	if err != nil {
+		return
+	}
+	resp, err := s.HTTPClient.Do(req)
 	if err != nil {
 		return
 	}

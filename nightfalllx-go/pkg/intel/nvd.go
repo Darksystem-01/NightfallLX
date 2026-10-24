@@ -1,6 +1,7 @@
 package intel
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -10,9 +11,13 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strings"
 	"sync"
 	"time"
 )
+
+var nvdCVEIDRe = regexp.MustCompile(`^CVE-[0-9]{4}-[0-9]{4,}$`)
 
 // NVDClient queries the NIST National Vulnerability Database REST API 2.0.
 type NVDClient struct {
@@ -44,6 +49,13 @@ func (c *NVDClient) SetBaseURL(urlStr string) {
 
 // waitRateLimit enforces the NVD API rate limits (5 req / 30s without key, 50 req / 30s with key).
 func (c *NVDClient) waitRateLimit() {
+	_ = c.waitRateLimitContext(context.Background())
+}
+
+func (c *NVDClient) waitRateLimitContext(ctx context.Context) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -54,9 +66,16 @@ func (c *NVDClient) waitRateLimit() {
 
 	elapsed := time.Since(c.lastReq)
 	if elapsed < delay {
-		time.Sleep(delay - elapsed)
+		timer := time.NewTimer(delay - elapsed)
+		defer timer.Stop()
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-timer.C:
+		}
 	}
 	c.lastReq = time.Now()
+	return nil
 }
 
 type nvdResponse struct {
@@ -90,33 +109,83 @@ type nvdResponse struct {
 
 // Lookup queries NVD by keyword, utilizing cached entries when available.
 func (c *NVDClient) Lookup(keyword string) ([]*IntelFinding, error) {
+	return c.LookupContext(context.Background(), keyword)
+}
+
+// LookupContext queries NVD by keyword with caller-controlled cancellation.
+func (c *NVDClient) LookupContext(ctx context.Context, keyword string) ([]*IntelFinding, error) {
 	validKeyword, err := ValidateQuery(keyword)
 	if err != nil {
 		return nil, err
 	}
+	params := url.Values{}
+	params.Set("keywordSearch", validKeyword)
+	return c.lookup(ctx, "keyword:"+validKeyword, params)
+}
+
+// LookupCVE fetches the CVSS score and English description for one CVE.
+func (c *NVDClient) LookupCVE(ctx context.Context, cveID string) (*IntelFinding, error) {
+	cveID = strings.ToUpper(strings.TrimSpace(cveID))
+	if !nvdCVEIDRe.MatchString(cveID) {
+		return nil, fmt.Errorf("invalid CVE identifier %q", cveID)
+	}
+	params := url.Values{}
+	params.Set("cveId", cveID)
+	findings, err := c.lookup(ctx, "cve:"+cveID, params)
+	if err != nil {
+		return nil, err
+	}
+	for _, finding := range findings {
+		for _, candidate := range finding.CVEs {
+			if strings.EqualFold(candidate, cveID) {
+				return finding, nil
+			}
+		}
+	}
+	return nil, nil
+}
+
+func (c *NVDClient) lookup(ctx context.Context, cacheKey string, params url.Values) ([]*IntelFinding, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 
 	// 1. Check local disk cache
-	cached, errCache := c.readCache(validKeyword)
+	cached, errCache := c.readCache(cacheKey)
 	if errCache == nil && cached != nil {
 		return cached, nil
 	}
 
 	// 2. Enforce rate limit
-	c.waitRateLimit()
+	if err := c.waitRateLimitContext(ctx); err != nil {
+		return nil, err
+	}
 
 	// 3. Make HTTP request
-	reqURL := fmt.Sprintf("%s?keywordSearch=%s", c.BaseURL, url.QueryEscape(validKeyword))
-	req, errReq := http.NewRequest("GET", reqURL, nil)
+	reqURL := c.BaseURL
+	separator := "?"
+	if strings.Contains(reqURL, "?") {
+		separator = "&"
+	}
+	reqURL += separator + params.Encode()
+	req, errReq := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
 	if errReq != nil {
 		return nil, errReq
 	}
 
-	req.Header.Set("User-Agent", "NightfallLX-Intel/2.0")
+	req.Header.Set("User-Agent", "NightfallLX-Intel/2.1")
 	if c.APIKey != "" {
 		req.Header.Set("apiKey", c.APIKey)
 	}
 
-	resp, errDo := c.HTTPClient.Do(req)
+	httpClient := c.HTTPClient
+	if httpClient == nil {
+		httpClient = &http.Client{Timeout: 15 * time.Second}
+	}
+	resp, errDo := httpClient.Do(req)
 	if errDo != nil {
 		return nil, fmt.Errorf("NVD request failed: %w", errDo)
 	}
@@ -126,7 +195,7 @@ func (c *NVDClient) Lookup(keyword string) ([]*IntelFinding, error) {
 		return nil, fmt.Errorf("NVD API returned HTTP %d", resp.StatusCode)
 	}
 
-	bodyBytes, errRead := io.ReadAll(resp.Body)
+	bodyBytes, errRead := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
 	if errRead != nil {
 		return nil, errRead
 	}
@@ -136,8 +205,14 @@ func (c *NVDClient) Lookup(keyword string) ([]*IntelFinding, error) {
 		return nil, fmt.Errorf("failed to parse NVD response: %w", err)
 	}
 
+	findings := nvdFindings(&nvdResp, params.Get("keywordSearch"))
+	_ = c.writeCache(cacheKey, findings)
+	return findings, nil
+}
+
+func nvdFindings(resp *nvdResponse, query string) []*IntelFinding {
 	var findings []*IntelFinding
-	for _, v := range nvdResp.Vulnerabilities {
+	for _, v := range resp.Vulnerabilities {
 		cveID := v.CVE.ID
 		desc := ""
 		for _, d := range v.CVE.Descriptions {
@@ -160,18 +235,14 @@ func (c *NVDClient) Lookup(keyword string) ([]*IntelFinding, error) {
 		}
 
 		findings = append(findings, &IntelFinding{
-			Query:  validKeyword,
+			Query:  query,
 			Source: "nvd",
 			Title:  desc,
 			CVEs:   []string{cveID},
 			CVSS:   cvss,
 		})
 	}
-
-	// Write to cache
-	_ = c.writeCache(validKeyword, findings)
-
-	return findings, nil
+	return findings
 }
 
 func (c *NVDClient) cacheFilePath(query string) string {

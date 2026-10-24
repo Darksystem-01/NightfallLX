@@ -72,7 +72,11 @@ func WriteMarkdownReportWithIntel(target *modules.Target, findings []*modules.Fi
 		fmt.Fprintf(f, "- **Vulnerable Parameter:** `%s`\n", item.Parameter)
 		fmt.Fprintf(f, "- **PoC Payload:** `%s`\n\n", item.Payload)
 		fmt.Fprintf(f, "#### Reproduction Command\n```bash\n%s\n```\n\n", curlCmd)
-		fmt.Fprintf(f, "#### Analysis & Evidence\n- **Detail:** %s\n- **Evidence:** %s\n\n", item.Detail, item.Evidence)
+		if item.DetailFormat == "markdown" || isStructuredMarkdown(item.Detail) {
+			fmt.Fprintf(f, "#### Analysis & Evidence\n\n%s\n\n", demoteMarkdownHeadings(item.Detail))
+		} else {
+			fmt.Fprintf(f, "#### Analysis & Evidence\n- **Detail:** %s\n- **Evidence:** %s\n\n", item.Detail, item.Evidence)
+		}
 		fmt.Fprintf(f, "#### Remediation\n%s\n\n", item.Remediation)
 	}
 
@@ -120,6 +124,26 @@ func formatConfidence(item *modules.Finding) string {
 
 func escapeMarkdownPipe(s string) string {
 	return strings.ReplaceAll(s, "|", "\\|")
+}
+
+func isStructuredMarkdown(detail string) bool {
+	trimmed := strings.TrimSpace(detail)
+	return strings.HasPrefix(trimmed, "# ") ||
+		strings.HasPrefix(trimmed, "## ") ||
+		strings.Contains(trimmed, "\n## ")
+}
+
+func demoteMarkdownHeadings(detail string) string {
+	lines := strings.Split(detail, "\n")
+	for i, line := range lines {
+		switch {
+		case strings.HasPrefix(line, "## "):
+			lines[i] = "##" + line
+		case strings.HasPrefix(line, "# "):
+			lines[i] = "##" + line
+		}
+	}
+	return strings.Join(lines, "\n")
 }
 
 // WriteJSONReport writes findings to a JSON file (backward-compatible).

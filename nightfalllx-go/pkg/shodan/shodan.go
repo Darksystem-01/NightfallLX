@@ -42,9 +42,9 @@ type HostInfo struct {
 
 // DomainInfo represents Shodan /dns/domain/{domain} response
 type DomainInfo struct {
-	Domain      string `json:"domain"`
-	Subdomains  []string `json:"subdomains"`
-	Data        []struct {
+	Domain     string   `json:"domain"`
+	Subdomains []string `json:"subdomains"`
+	Data       []struct {
 		Subdomain string `json:"subdomain"`
 		Type      string `json:"type"`
 		Value     string `json:"value"`

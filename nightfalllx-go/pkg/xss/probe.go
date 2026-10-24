@@ -13,11 +13,11 @@ const ProbeCharacters = `<>"'` + "`" + `/();={}`
 
 // ProbeResult records which special characters survived reflection unescaped.
 type ProbeResult struct {
-	Canary         string          `json:"canary"`
-	SurvivingChars map[rune]bool   `json:"surviving_chars"`
-	Reflections    []*Reflection   `json:"reflections"`
-	Blocked        bool            `json:"blocked"`
-	StatusCode     int             `json:"status_code"`
+	Canary         string        `json:"canary"`
+	SurvivingChars map[rune]bool `json:"surviving_chars"`
+	Reflections    []*Reflection `json:"reflections"`
+	Blocked        bool          `json:"blocked"`
+	StatusCode     int           `json:"status_code"`
 }
 
 // RandomToken generates a short alphanumeric token for markers and canaries.

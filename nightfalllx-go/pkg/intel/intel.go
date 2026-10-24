@@ -1,8 +1,10 @@
 package intel
 
 import (
+	"context"
 	"net/http"
 	"nightfalllx/pkg/detector"
+	"os"
 	"regexp"
 	"strings"
 )
@@ -83,10 +85,23 @@ func ExtractProductVersions(techs []*detector.Technology, headers http.Header, h
 	return list
 }
 
+const (
+	maxIntelFindingsPerQuery = 25
+	maxIntelFindingsTotal    = 100
+)
+
 // RunIntel coordinates searchsploit and optional NVD lookups for detected products/versions.
 func RunIntel(targetURL string, pvList []ProductVersion, enableNVD bool) *IntelReport {
+	return RunIntelContext(context.Background(), targetURL, pvList, enableNVD)
+}
+
+// RunIntelContext is the cancellable reference-lookup entry point.
+func RunIntelContext(ctx context.Context, targetURL string, pvList []ProductVersion, enableNVD bool) *IntelReport {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	report := &IntelReport{
-		Target: targetURL,
+		Target:     targetURL,
 		Disclaimer: "Version detection can be wrong or imprecise. The following public reference metadata is unverified and requires manual confirmation. No exploit code was opened, executed, or tested.",
 	}
 
@@ -97,11 +112,19 @@ func RunIntel(targetURL string, pvList []ProductVersion, enableNVD bool) *IntelR
 	}
 
 	var nvdClient *NVDClient
-	if enableNVD {
+	if enableNVD || os.Getenv("NVD_API_KEY") != "" {
 		nvdClient = NewNVDClient()
 	}
 
 	for _, pv := range pvList {
+		if ctx.Err() != nil {
+			break
+		}
+		// Automatic versionless matches are too noisy to be useful. Manual
+		// --intel-query input is still allowed and remains capped below.
+		if strings.TrimSpace(pv.Version) == "" && pv.Source != "flag" {
+			continue
+		}
 		q := pv.Product
 		if pv.Version != "" {
 			q = pv.Product + " " + pv.Version
@@ -114,18 +137,25 @@ func RunIntel(targetURL string, pvList []ProductVersion, enableNVD bool) *IntelR
 
 		// 1. Searchsploit lookup
 		if ssClient.IsAvailable() {
-			findings, err := ssClient.Lookup(pv.Product, pv.Version)
+			findings, err := ssClient.LookupContext(ctx, pv.Product, pv.Version)
 			if err == nil && len(findings) > 0 {
+				if len(findings) > maxIntelFindingsPerQuery {
+					findings = findings[:maxIntelFindingsPerQuery]
+				}
 				report.Findings = append(report.Findings, findings...)
 			}
 		}
 
 		// 2. NVD lookup
 		if nvdClient != nil {
-			nvdFindings, errNVD := nvdClient.Lookup(q)
+			nvdFindings, errNVD := nvdClient.LookupContext(ctx, q)
 			if errNVD == nil && len(nvdFindings) > 0 {
 				report.Findings = append(report.Findings, nvdFindings...)
 			}
+		}
+		if len(report.Findings) >= maxIntelFindingsTotal {
+			report.Findings = report.Findings[:maxIntelFindingsTotal]
+			break
 		}
 	}
 

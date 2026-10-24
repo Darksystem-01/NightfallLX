@@ -41,13 +41,13 @@ type MenuItem struct {
 
 // InteractiveTUI manages the mouse-controllable terminal UI.
 type InteractiveTUI struct {
-	TargetURL   string
-	Proxy       string
-	Threads     int
-	Wordlist    string
+	TargetURL     string
+	Proxy         string
+	Threads       int
+	Wordlist      string
 	SelectedIndex int
-	Items       []MenuItem
-	StatusMsg   string
+	Items         []MenuItem
+	StatusMsg     string
 }
 
 func NewInteractiveTUI(initialURL string) *InteractiveTUI {
@@ -55,9 +55,9 @@ func NewInteractiveTUI(initialURL string) *InteractiveTUI {
 		initialURL = "http://127.0.0.1:8080"
 	}
 	return &InteractiveTUI{
-		TargetURL:   initialURL,
-		Threads:     40,
-		StatusMsg:   "Ready. Click any button with your mouse or use [1-9] / Arrow keys.",
+		TargetURL: initialURL,
+		Threads:   40,
+		StatusMsg: "Ready. Click any button with your mouse or use [1-9] / Arrow keys.",
 	}
 }
 
@@ -274,7 +274,7 @@ func (t *InteractiveTUI) RunLoop() {
 
 		// Direct number press [1-9]
 		if len(event) == 1 && event[0] >= '1' && event[0] <= '9' {
-			idx := int(event[0]-'1')
+			idx := int(event[0] - '1')
 			if idx < len(t.Items) {
 				t.SelectedIndex = idx
 				t.executeItem(t.Items[idx].ID)
@@ -490,30 +490,12 @@ func (t *InteractiveTUI) runAllVulnModules() {
 	}
 
 	httpClient := client.NewClient(t.Proxy, 8*time.Second, true, "", nil)
-	activeMods := []modules.Module{
-		modules.NewWAFModule(),
-		modules.NewHeadersModule(),
-		modules.NewExposureModule(),
-		modules.NewSQLiModule(),
-		modules.NewSSTIModule(),
-		modules.NewLFIModule(),
-		modules.NewCMDiModule(),
-		modules.NewXSSModule(),
-		modules.NewCORSModule(),
-		modules.NewRedirectModule(),
-		modules.NewSSRFModule(),
-		modules.NewJWTModule(),
-		modules.NewIDORModule(),
-		modules.NewCSRFModule(),
-		modules.NewXXEModule(),
-		modules.NewNoSQLiModule(),
-		modules.NewUploadModule(),
-		modules.NewHostHeaderModule(),
-		modules.NewCRLFModule(),
-		modules.NewGraphQLModule(),
-		modules.NewProtoPollutionModule(),
-		modules.NewMassAssignModule(),
-		modules.NewDeserializeModule(),
+	availableModules := modules.Registry(nil)
+	activeMods := make([]modules.Module, 0, len(availableModules))
+	for _, name := range modules.AllOrder() {
+		if mod, ok := availableModules[name]; ok {
+			activeMods = append(activeMods, mod)
+		}
 	}
 
 	for _, mod := range activeMods {

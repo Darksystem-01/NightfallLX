@@ -2,6 +2,7 @@ package fuzzer
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"net/url"
 	"nightfalllx/pkg/client"
@@ -38,6 +39,8 @@ type Config struct {
 	Insecure      bool
 	AutoCalibrate bool
 	IsSubdomain   bool
+	Context       context.Context
+	Limiter       *client.RateLimiter
 	MatchCodes    map[int]bool
 	FilterCodes   map[int]bool
 	MatchSizes    map[int]bool
@@ -150,6 +153,12 @@ func NewFuzzer(cfg *Config) *Fuzzer {
 	}
 
 	c := client.NewClient(cfg.Proxy, cfg.Timeout, cfg.Insecure, "", nil)
+	if cfg.Context != nil {
+		c.SetContext(cfg.Context)
+	}
+	if cfg.Limiter != nil {
+		c.Limiter = cfg.Limiter
+	}
 	return &Fuzzer{
 		cfg:    cfg,
 		client: c,
@@ -257,15 +266,32 @@ func (f *Fuzzer) Run() ([]*Result, error) {
 	doneProgress := make(chan struct{})
 	go f.progressLoop(doneProgress)
 
-	// Feed words to channel
+	ctx := f.cfg.Context
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	// Feed words to channel, stopping promptly on cancellation.
+	cancelled := false
 	for _, word := range words {
-		jobs <- word
+		select {
+		case <-ctx.Done():
+			cancelled = true
+		case jobs <- word:
+			continue
+		}
+		if cancelled {
+			break
+		}
 	}
 	close(jobs)
 
 	// Wait for workers to finish
 	wg.Wait()
 	close(doneProgress)
+	if cancelled {
+		return f.results, ctx.Err()
+	}
 
 	duration := time.Since(f.startTime)
 	rps := float64(f.total) / duration.Seconds()
@@ -282,6 +308,9 @@ func (f *Fuzzer) Run() ([]*Result, error) {
 
 func (f *Fuzzer) processWord(word string) {
 	defer atomic.AddInt64(&f.completed, 1)
+	if f.cfg.Context != nil && f.cfg.Context.Err() != nil {
+		return
+	}
 
 	reqURL := f.replaceKeyword(f.cfg.URL, word)
 	reqData := ""

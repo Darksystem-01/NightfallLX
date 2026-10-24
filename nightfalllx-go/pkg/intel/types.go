@@ -24,26 +24,26 @@ type ProductVersion struct {
 
 // IntelFinding contains public reference metadata from local searchsploit index or NVD.
 type IntelFinding struct {
-	Query      string   `json:"query"`
-	Source     string   `json:"source"` // "searchsploit" or "nvd"
-	Title      string   `json:"title"`
-	EDBID      string   `json:"edb_id,omitempty"`
-	CVEs       []string `json:"cves,omitempty"`
-	LocalPath  string   `json:"local_path,omitempty"` // Local path only; NEVER opened or executed
-	Type       string   `json:"type,omitempty"`
-	Platform   string   `json:"platform,omitempty"`
-	Date       string   `json:"date,omitempty"`
-	CVSS       float64  `json:"cvss,omitempty"`
+	Query     string   `json:"query"`
+	Source    string   `json:"source"` // "searchsploit" or "nvd"
+	Title     string   `json:"title"`
+	EDBID     string   `json:"edb_id,omitempty"`
+	CVEs      []string `json:"cves,omitempty"`
+	LocalPath string   `json:"local_path,omitempty"` // Local path only; NEVER opened or executed
+	Type      string   `json:"type,omitempty"`
+	Platform  string   `json:"platform,omitempty"`
+	Date      string   `json:"date,omitempty"`
+	CVSS      float64  `json:"cvss,omitempty"`
 }
 
 // IntelReport contains the aggregate version-matched reference findings.
 type IntelReport struct {
-	Target                string            `json:"target"`
-	Queries               []string          `json:"queries"`
-	Findings              []*IntelFinding   `json:"findings"`
-	SearchsploitAvailable bool              `json:"searchsploit_available"`
-	InstallHint           string            `json:"install_hint,omitempty"`
-	Disclaimer            string            `json:"disclaimer"`
+	Target                string          `json:"target"`
+	Queries               []string        `json:"queries"`
+	Findings              []*IntelFinding `json:"findings"`
+	SearchsploitAvailable bool            `json:"searchsploit_available"`
+	InstallHint           string          `json:"install_hint,omitempty"`
+	Disclaimer            string          `json:"disclaimer"`
 }
 
 // ValidateQuery enforces strict character set and length constraints to prevent argument injection.

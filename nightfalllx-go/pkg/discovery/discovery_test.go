@@ -15,9 +15,9 @@ import (
 func TestParameterDiscoveryExactThree(t *testing.T) {
 	// Vulnerable fixture server listening for exactly 3 hidden parameters
 	hiddenParams := map[string]bool{
-		"debug":        true,
-		"admin_token":  true,
-		"system_cmd":   true,
+		"debug":       true,
+		"admin_token": true,
+		"system_cmd":  true,
 	}
 
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

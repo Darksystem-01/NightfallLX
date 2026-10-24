@@ -8,12 +8,12 @@ import (
 
 // EngineConfig configures the native Go XSS testing engine.
 type EngineConfig struct {
-	EnableDOM         bool
-	EnableDOMBrowser  bool
-	EnableForms       bool
-	EnableStored      bool
+	EnableDOM          bool
+	EnableDOMBrowser   bool
+	EnableForms        bool
+	EnableStored       bool
 	MaxVectorsPerParam int
-	FuzzMode          bool
+	FuzzMode           bool
 }
 
 // DefaultEngineConfig returns sensible defaults for fast and comprehensive testing.
@@ -290,4 +290,3 @@ func (e *Engine) sendParam(target *Target, param, val string, c *client.Client) 
 	reqURL := target.BuildURLWithParam(param, val)
 	return c.Get(reqURL)
 }
-

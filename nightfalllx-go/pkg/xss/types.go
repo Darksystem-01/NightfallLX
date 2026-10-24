@@ -4,13 +4,13 @@ import "net/url"
 
 // Target defines the target parameters and request data for XSS scanning.
 type Target struct {
-	URL      string
-	Method   string
-	Params   map[string]string
-	Data     map[string]string
-	Headers  map[string]string
-	IsJSON   bool
-	RawJSON  string
+	URL     string
+	Method  string
+	Params  map[string]string
+	Data    map[string]string
+	Headers map[string]string
+	IsJSON  bool
+	RawJSON string
 }
 
 // Parameters returns all testable parameter names.

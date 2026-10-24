@@ -22,7 +22,7 @@ func (m *CSRFModule) Description() string {
 }
 
 var (
-	csrfTokenRegex = regexp.MustCompile(`(?i)(csrf|xsrf|_token|authenticity_token|nonce|protect|forgery)`)
+	csrfTokenRegex  = regexp.MustCompile(`(?i)(csrf|xsrf|_token|authenticity_token|nonce|protect|forgery)`)
 	formMethodRegex = regexp.MustCompile(`(?i)<form[^>]+method=["'](post|put|delete)["']`)
 	formActionRegex = regexp.MustCompile(`(?i)<form[^>]*action=["']([^"']*)["']`)
 )

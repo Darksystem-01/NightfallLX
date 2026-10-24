@@ -1,6 +1,7 @@
 package client
 
 import (
+	"context"
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
@@ -12,6 +13,8 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+
+	"nightfalllx/pkg/version"
 	"time"
 )
 
@@ -45,17 +48,38 @@ func NewRateLimiter(rate int) *RateLimiter {
 }
 
 func (r *RateLimiter) Wait() {
+	_ = r.WaitContext(context.Background())
+}
+
+// WaitContext blocks until the next request slot or context cancellation.
+// The mutex is held while sleeping so concurrent workers share one global
+// request schedule rather than each maintaining a private rate.
+func (r *RateLimiter) WaitContext(ctx context.Context) error {
 	if r == nil {
-		return
+		return nil
 	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	now := time.Now()
 	elapsed := now.Sub(r.lastReq)
 	if elapsed < r.interval {
-		time.Sleep(r.interval - elapsed)
+		timer := time.NewTimer(r.interval - elapsed)
+		defer timer.Stop()
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-timer.C:
+		}
 	}
 	r.lastReq = time.Now()
+	return nil
 }
 
 // Client wraps an optimized http.Client with connection reuse, cookie jar, proxy, and auth management.
@@ -69,6 +93,7 @@ type Client struct {
 	ScopeHosts []string
 	ScopeOff   bool
 	Limiter    *RateLimiter
+	ctx        context.Context
 
 	// Authenticated Scanning
 	LoginURL           string
@@ -123,7 +148,31 @@ func NewClient(proxyURL string, timeout time.Duration, insecure bool, cookie str
 		Headers:    headers,
 		Cookie:     cookie,
 		ScopeOff:   false,
+		ctx:        context.Background(),
 	}
+}
+
+// SetContext sets the context used for all subsequent HTTP requests and rate-limit waits.
+func (c *Client) SetContext(ctx context.Context) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	c.ctx = ctx
+}
+
+// Context returns the client request context.
+func (c *Client) Context() context.Context {
+	if c.ctx == nil {
+		return context.Background()
+	}
+	return c.ctx
+}
+
+// HTTPClient exposes the underlying standard client for plugin execution.
+// Plugins receive the configured proxy, TLS, cookie jar, and context but must
+// apply their own request-specific headers.
+func (c *Client) HTTPClient() *http.Client {
+	return c.httpClient
 }
 
 // SetRateLimit sets the rate limit in requests per second.
@@ -228,8 +277,14 @@ func (c *Client) RefreshToken() error {
 
 // Request sends an HTTP request, checks scope, applies rate limiting, and handles auto-relogin.
 func (c *Client) Request(method, reqURL, data string, customHeaders map[string]string) (*Response, error) {
+	ctx := c.Context()
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if c.Limiter != nil {
-		c.Limiter.Wait()
+		if err := c.Limiter.WaitContext(ctx); err != nil {
+			return nil, err
+		}
 	}
 
 	resp, err := c.rawRequest(method, reqURL, data, customHeaders)
@@ -275,12 +330,12 @@ func (c *Client) rawRequest(method, reqURL, data string, customHeaders map[strin
 		bodyReader = strings.NewReader(data)
 	}
 
-	req, err := http.NewRequest(method, reqURL, bodyReader)
+	req, err := http.NewRequestWithContext(c.Context(), method, reqURL, bodyReader)
 	if err != nil {
 		return nil, err
 	}
 
-	req.Header.Set("User-Agent", "NightfallLX/2.0 (+https://github.com/Darksystem-01/NightfallLX)")
+	req.Header.Set("User-Agent", version.UserAgent+" (+https://github.com/Darksystem-01/NightfallLX)")
 
 	if c.Cookie != "" {
 		req.Header.Set("Cookie", c.Cookie)
@@ -366,4 +421,3 @@ func (c *Client) PostRaw(reqURL, body, contentType string) (*Response, error) {
 func (c *Client) DoCustom(method, reqURL string, headers map[string]string, body string) (*Response, error) {
 	return c.Request(method, reqURL, body, headers)
 }
-

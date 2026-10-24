@@ -1,10 +1,13 @@
 package client
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"regexp"
+	"sync"
 	"testing"
 	"time"
 )
@@ -105,5 +108,45 @@ func TestClientRateLimiting(t *testing.T) {
 
 	if elapsed < 150*time.Millisecond {
 		t.Fatalf("expected rate limiting to enforce delay, elapsed %v", elapsed)
+	}
+}
+
+func TestRateLimiterGlobalConcurrent(t *testing.T) {
+	limiter := NewRateLimiter(10) // 100ms between requests
+	start := time.Now()
+	var wg sync.WaitGroup
+	for i := 0; i < 4; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if err := limiter.WaitContext(context.Background()); err != nil {
+				t.Errorf("wait failed: %v", err)
+			}
+		}()
+	}
+	wg.Wait()
+	elapsed := time.Since(start)
+	if elapsed < 280*time.Millisecond {
+		t.Fatalf("expected global rate limiting across goroutines, elapsed %v", elapsed)
+	}
+}
+
+func TestClientContextCancellation(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		<-r.Context().Done()
+	}))
+	defer server.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	c := NewClient("", 5*time.Second, true, "", nil)
+	c.SetContext(ctx)
+	cancel()
+
+	_, err := c.Get(server.URL)
+	if err == nil {
+		t.Fatal("expected context cancellation error")
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected context.Canceled, got %v", err)
 	}
 }

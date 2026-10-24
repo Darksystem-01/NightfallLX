@@ -1,11 +1,14 @@
 package intel
 
 import (
+	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -29,7 +32,7 @@ func TestQueryValidation(t *testing.T) {
 		"php;id",
 		"apache | whoami",
 		"test`cat /etc/passwd`",
-		"12345678901234567890123456789012345678901234567890123456789012345", // exactly 65 chars
+		"12345678901234567890123456789012345678901234567890123456789012345",                         // exactly 65 chars
 		"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", // > 64 chars
 		"",
 	}
@@ -226,3 +229,137 @@ func TestRealSearchsploitOptional(t *testing.T) {
 	}
 }
 
+func TestWPScanClientWithMockServer(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Token test-token" {
+			t.Errorf("unexpected authorization header: %q", r.Header.Get("Authorization"))
+		}
+		switch r.URL.Path {
+		case "/wordpresses/6.4.2":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"6.4.2":{"vulnerabilities":[{"id":"abc","title":"Core issue","fixed_in":"6.4.3","references":{"cve":["2023-12345"],"url":["https://example.test/core"]},"cvss":{"score":8.8}}]}}`))
+		case "/plugins/contact-form-7":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"contact-form-7":{"vulnerabilities":[{"id":"def","title":"CF7 upload","fixed_in":"5.3.2","references":{"cve":["2020-35489"]},"cvss":{"score":9.8}}]}}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	client := NewWPScanClient("test-token")
+	client.BaseURL = server.URL
+	core, err := client.LookupCore(context.Background(), "6.4.2")
+	if err != nil {
+		t.Fatalf("core lookup failed: %v", err)
+	}
+	if len(core) != 1 || len(core[0].CVEs) != 1 || core[0].CVEs[0] != "CVE-2023-12345" {
+		t.Fatalf("unexpected core findings: %+v", core)
+	}
+	plugin, err := client.LookupPlugin(context.Background(), "contact-form-7")
+	if err != nil {
+		t.Fatalf("plugin lookup failed: %v", err)
+	}
+	if len(plugin) != 1 || plugin[0].CVSS != 9.8 || plugin[0].FixedIn != "5.3.2" {
+		t.Fatalf("unexpected plugin findings: %+v", plugin)
+	}
+}
+
+func TestNVDLookupCVE(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("cveId") != "CVE-2020-35489" {
+			t.Errorf("unexpected cveId: %q", r.URL.Query().Get("cveId"))
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"vulnerabilities":[{"cve":{"id":"CVE-2020-35489","descriptions":[{"lang":"en","value":"Unrestricted file upload in Contact Form 7."}],"metrics":{"cvssMetricV31":[{"cvssData":{"baseScore":9.8}}]}}}]}`))
+	}))
+	defer server.Close()
+
+	client := NewNVDClient()
+	client.SetBaseURL(server.URL)
+	client.CacheDir = t.TempDir()
+	finding, err := client.LookupCVE(context.Background(), "cve-2020-35489")
+	if err != nil {
+		t.Fatalf("NVD CVE lookup failed: %v", err)
+	}
+	if finding == nil || finding.CVSS != 9.8 || len(finding.CVEs) != 1 || finding.CVEs[0] != "CVE-2020-35489" {
+		t.Fatalf("unexpected NVD finding: %+v", finding)
+	}
+	if !strings.Contains(finding.Title, "Unrestricted file upload") {
+		t.Errorf("unexpected description: %q", finding.Title)
+	}
+}
+
+func TestExploitDownloader(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/raw/49083" {
+			http.NotFound(w, r)
+			return
+		}
+		_, _ = w.Write([]byte("#!/usr/bin/env python3\nprint('proof')\n"))
+	}))
+	defer server.Close()
+
+	dir := t.TempDir()
+	downloader := NewExploitDownloader(dir)
+	downloader.BaseURL = server.URL
+	download, err := downloader.Download(context.Background(), "49083")
+	if err != nil {
+		t.Fatalf("download failed: %v", err)
+	}
+	if download.Path != filepath.Join(dir, "edb-49083.txt") {
+		t.Fatalf("unexpected download path: %s", download.Path)
+	}
+	body, err := os.ReadFile(download.Path)
+	if err != nil {
+		t.Fatalf("read downloaded file: %v", err)
+	}
+	if !strings.Contains(string(body), "print('proof')") {
+		t.Errorf("unexpected downloaded body: %q", string(body))
+	}
+	// Existing files are reused rather than fetched again.
+	server.Close()
+	if _, err := downloader.Download(context.Background(), "49083"); err != nil {
+		t.Fatalf("expected cached download to succeed: %v", err)
+	}
+	if _, err := downloader.Download(context.Background(), "../etc/passwd"); err == nil {
+		t.Fatal("expected invalid EDB-ID to be rejected")
+	}
+}
+
+func TestRunIntelSkipsVersionlessAutomaticAndCapsResults(t *testing.T) {
+	dir := t.TempDir()
+	var rows []string
+	for i := 0; i < 50; i++ {
+		rows = append(rows, fmt.Sprintf(`{"Title":"Test Exploit %d","EDB-ID":"%d","Path":"/tmp/%d.txt"}`, i, i+1, i+1))
+	}
+	payload := `{"SEARCH":"test","RESULTS_EXPLOIT":[` + strings.Join(rows, ",") + `]}`
+	script := "#!/bin/sh\ncat <<'OUT'\n" + payload + "\nOUT\n"
+	bin := filepath.Join(dir, "searchsploit")
+	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("NVD_API_KEY", "")
+
+	automatic := RunIntelContext(context.Background(), "http://target.lab", []ProductVersion{
+		{Product: "WordPress", Version: "", Source: "detector"},
+	}, false)
+	if len(automatic.Findings) != 0 {
+		t.Fatalf("versionless automatic lookup should be skipped, got %d findings", len(automatic.Findings))
+	}
+
+	versioned := RunIntelContext(context.Background(), "http://target.lab", []ProductVersion{
+		{Product: "WordPress", Version: "6.4.2", Source: "detector"},
+	}, false)
+	if len(versioned.Findings) != maxIntelFindingsPerQuery {
+		t.Fatalf("expected %d capped findings, got %d", maxIntelFindingsPerQuery, len(versioned.Findings))
+	}
+
+	manual := RunIntelContext(context.Background(), "http://target.lab", []ProductVersion{
+		{Product: "WordPress", Version: "", Source: "flag"},
+	}, false)
+	if len(manual.Findings) != maxIntelFindingsPerQuery {
+		t.Fatalf("manual versionless query should be capped, got %d findings", len(manual.Findings))
+	}
+}

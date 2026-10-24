@@ -26,14 +26,14 @@ var (
 	mongoErrorRegex = regexp.MustCompile(`(?i)(MongoError|MongoServerError|Can't canonicalize query|Cannot use '\$|unknown operator: \$|BSONObj size|Cast to ObjectId failed|syntax error near.*mongo|bad query: BadValue|Failed to parse: \$|CouchDB.*error|unknown query operator)`)
 
 	/*
-	CATEGORY: NoSQL Injection Probes (50+ entries)
-	Sources: PayloadsAllTheThings NoSQLi, OWASP Testing Guide, HackTricks NoSQL.
-	Contexts:
-	- Evaluation operators ($where, $regex, $expr)
-	- Comparison operators ($ne, $gt, $gte, $lt, $lte, $in, $nin)
-	- Element & Logical operators ($exists, $type, $or, $and, $not)
-	- Form query selector parameters ([$ne], [$gt], [$regex])
-	- JSON object payloads
+		CATEGORY: NoSQL Injection Probes (50+ entries)
+		Sources: PayloadsAllTheThings NoSQLi, OWASP Testing Guide, HackTricks NoSQL.
+		Contexts:
+		- Evaluation operators ($where, $regex, $expr)
+		- Comparison operators ($ne, $gt, $gte, $lt, $lte, $in, $nin)
+		- Element & Logical operators ($exists, $type, $or, $and, $not)
+		- Form query selector parameters ([$ne], [$gt], [$regex])
+		- JSON object payloads
 	*/
 	noSQLiErrorProbes = []string{
 		// 1. MongoDB $where Evaluation

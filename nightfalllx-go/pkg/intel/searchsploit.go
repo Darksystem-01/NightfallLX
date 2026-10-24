@@ -54,8 +54,16 @@ func (c *SearchsploitClient) IsAvailable() bool {
 // It parses the JSON output and extracts metadata only.
 // SAFETY: Files listed in searchsploit are NEVER opened, read, copied, or executed.
 func (c *SearchsploitClient) Lookup(product, version string) ([]*IntelFinding, error) {
+	return c.LookupContext(context.Background(), product, version)
+}
+
+// LookupContext queries the local index with caller-controlled cancellation.
+func (c *SearchsploitClient) LookupContext(ctx context.Context, product, version string) ([]*IntelFinding, error) {
 	if !c.IsAvailable() {
 		return nil, ErrSearchsploitNotFound
+	}
+	if ctx == nil {
+		ctx = context.Background()
 	}
 
 	query := strings.TrimSpace(product + " " + version)
@@ -68,7 +76,7 @@ func (c *SearchsploitClient) Lookup(product, version string) ([]*IntelFinding, e
 	if timeout <= 0 {
 		timeout = 10 * time.Second
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
 	// Never use a shell string; use exec.CommandContext with explicit argument slice and "--"

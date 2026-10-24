@@ -34,7 +34,7 @@ func ParseRawRequest(data []byte, isHTTPS bool) (*RawRequest, error) {
 
 	// Normalize line endings to \n
 	normalized := bytes.ReplaceAll(data, []byte("\r\n"), []byte("\n"))
-	
+
 	// Split headers and body
 	var headerBytes, bodyBytes []byte
 	splitIdx := bytes.Index(normalized, []byte("\n\n"))

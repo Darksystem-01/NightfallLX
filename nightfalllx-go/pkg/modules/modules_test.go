@@ -997,6 +997,7 @@ func TestNegativeRegressionAllModules(t *testing.T) {
 		NewProtoPollutionModule(),
 		NewMassAssignModule(),
 		NewDeserializeModule(),
+		NewExploitMapperModule(),
 	}
 
 	for _, mod := range allModules {
@@ -1030,5 +1031,3 @@ func TestNegativeRegressionAllModules(t *testing.T) {
 		}
 	})
 }
-
-

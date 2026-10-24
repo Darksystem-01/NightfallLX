@@ -32,14 +32,14 @@ var (
 	sqlErrorRegex = regexp.MustCompile(`(?i)(you have an error in your sql syntax|error in your sql syntax|SQL syntax.*MySQL|Warning.*mysql_|valid MySQL result|MySqlClient\.|PostgreSQL.*ERROR|Warning.*\Wpg_|valid PostgreSQL result|Npgsql\.|Driver.*SQL[\-\_\ ]*Server|OLE DB.*SQL Server|\bORA\-[0-9]{4,5}|Oracle error|SQLite/JDBCDriver|SQLite.Exception|System.Data.SQLite.SQLiteException|syntax error near|Microsoft Access Database Engine|JET Database Engine|ODBC Microsoft Access Driver|CLI Driver.*DB2|DB2 SQL error|Informix ODBC Driver|Sybase message|SQLSTATE\[)`)
 
 	/*
-	CATEGORY: Boolean Differential SQLi Vector Pairs (50+ pairs)
-	Sources: OWASP Testing Guide, SQLi Reference Manuals, PortSwigger SQLi Cheat Sheet.
-	Contexts:
-	- Unquoted numeric literals
-	- Single quote string literals with comment variations (-- -, #, /*)
-	- Double quote string literals
-	- Single and double parentheses enclosures
-	- DBMS-specific boolean syntax (MySQL, PostgreSQL, MSSQL, Oracle, SQLite)
+		CATEGORY: Boolean Differential SQLi Vector Pairs (50+ pairs)
+		Sources: OWASP Testing Guide, SQLi Reference Manuals, PortSwigger SQLi Cheat Sheet.
+		Contexts:
+		- Unquoted numeric literals
+		- Single quote string literals with comment variations (-- -, #, /*)
+		- Double quote string literals
+		- Single and double parentheses enclosures
+		- DBMS-specific boolean syntax (MySQL, PostgreSQL, MSSQL, Oracle, SQLite)
 	*/
 	sqliPairs = [][2]string{
 		// 1. Numeric / Integer Context (No quotes)

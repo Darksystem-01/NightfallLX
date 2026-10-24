@@ -141,4 +141,3 @@ func (m *XSSModule) Run(target *Target, c *client.Client) ([]*Finding, error) {
 
 	return findings, nil
 }
-

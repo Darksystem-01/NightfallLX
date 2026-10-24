@@ -2,11 +2,11 @@ package xss
 
 import (
 	"fmt"
+	"golang.org/x/net/html"
 	"net/url"
 	"nightfalllx/pkg/client"
 	"regexp"
 	"strings"
-	"golang.org/x/net/html"
 )
 
 // HTMLForm represents a parsed HTML <form>.

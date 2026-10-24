@@ -41,6 +41,7 @@ type Finding struct {
 	Parameter       string          `json:"parameter"`
 	Payload         string          `json:"payload"`
 	Detail          string          `json:"detail"`
+	DetailFormat    string          `json:"detail_format,omitempty"`
 	Evidence        string          `json:"evidence"`
 	Remediation     string          `json:"remediation"`
 	CWEID           int             `json:"cwe_id"`

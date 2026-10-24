@@ -55,8 +55,8 @@ var (
 	}
 
 	// Pattern for variable assignment: (var|let|const|)\s*([a-zA-Z0-9_$]+)\s*=\s*(.*)
-	assignRegex = regexp.MustCompile(`(?:var|let|const)?\s*([a-zA-Z0-9_$]+)\s*=\s*([^;]+)`)
-	scriptSrcRegex = regexp.MustCompile(`(?i)<script[^>]+src=["']([^"']+)["']`)
+	assignRegex       = regexp.MustCompile(`(?:var|let|const)?\s*([a-zA-Z0-9_$]+)\s*=\s*([^;]+)`)
+	scriptSrcRegex    = regexp.MustCompile(`(?i)<script[^>]+src=["']([^"']+)["']`)
 	inlineScriptRegex = regexp.MustCompile(`(?is)<script(?:\s+[^>]*)?>(.*?)</script>`)
 )
 

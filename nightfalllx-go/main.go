@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"flag"
 	"fmt"
 	"net/http"
@@ -14,16 +15,23 @@ import (
 	"nightfalllx/pkg/modules"
 	"nightfalllx/pkg/oast"
 	"nightfalllx/pkg/parser"
+	"nightfalllx/pkg/plugins"
+	"nightfalllx/pkg/profile"
 	"nightfalllx/pkg/reporters"
 	"nightfalllx/pkg/shodan"
 	"nightfalllx/pkg/sitemap"
+	"nightfalllx/pkg/state"
 	"nightfalllx/pkg/troubleshoot"
 	"nightfalllx/pkg/tui"
+	"nightfalllx/pkg/update"
+	"nightfalllx/pkg/version"
 	"nightfalllx/pkg/xss"
 	"os"
+	"os/signal"
 	"regexp"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -36,6 +44,10 @@ func (i *arrayFlags) String() string {
 func (i *arrayFlags) Set(value string) error {
 	*i = append(*i, value)
 	return nil
+}
+
+func (i *arrayFlags) Values() []string {
+	return []string(*i)
 }
 
 func parseCodes(raw string) map[int]bool {
@@ -53,57 +65,60 @@ func parseCodes(raw string) map[int]bool {
 }
 
 func main() {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
 	var (
-		rawURL             string
-		rawReqFile         string
-		domain             string
-		moduleList         string
-		method             string
-		data               string
-		cookie             string
-		proxy              string
-		insecure           bool
-		isHTTPS            bool
-		output             string
-		wordlist           string
-		threads            int
-		matchCodesRaw      string
-		filterCodeRaw      string
-		matchSizesRaw      string
-		filterSizeRaw      string
-		matchWordsRaw      string
-		filterWordsRaw     string
-		matchLinesRaw      string
-		filterLinesRaw     string
-		isFuzz             bool
-		isSubdomain        bool
-		autoCalibrate      bool
-		timeoutSec         int
-		isDoctor           bool
-		isTech             bool
-		isShodan           bool
-		shodanKey          string
-		isSiteMap          bool
-		isCrawlXSS         bool
-		spiderDepth        int
-		spiderMaxURLs      int
-		isInteractive      bool
-		headersFlag        arrayFlags
-		headers2Flag       arrayFlags
-		cookie2            string
-		scope              string
-		scopeOff           bool
+		rawURL         string
+		rawReqFile     string
+		domain         string
+		moduleList     string
+		method         string
+		data           string
+		cookie         string
+		proxy          string
+		insecure       bool
+		isHTTPS        bool
+		output         string
+		wordlist       string
+		threads        int
+		matchCodesRaw  string
+		filterCodeRaw  string
+		matchSizesRaw  string
+		filterSizeRaw  string
+		matchWordsRaw  string
+		filterWordsRaw string
+		matchLinesRaw  string
+		filterLinesRaw string
+		isFuzz         bool
+		isSubdomain    bool
+		autoCalibrate  bool
+		timeoutSec     int
+		isDoctor       bool
+		isTech         bool
+		isShodan       bool
+		shodanKey      string
+		isSiteMap      bool
+		isCrawlXSS     bool
+		spiderDepth    int
+		spiderMaxURLs  int
+		isInteractive  bool
+		headersFlag    arrayFlags
+		headers2Flag   arrayFlags
+		cookie2        string
+		scope          string
+		scopeOff       bool
 
 		// OAST Out-of-band listener
-		oastListen         string
-		oastHost           string
-		oastWaitSec        int
+		oastListen  string
+		oastHost    string
+		oastWaitSec int
 
 		// Time-based SQLi
-		sqliDelaySec       int
+		sqliDelaySec int
 
 		// Parameter discovery
-		discoverParams     bool
+		discoverParams bool
 
 		// Authenticated scanning
 		loginURL           string
@@ -118,24 +133,40 @@ func main() {
 		refreshJSONPath    string
 
 		// JSON & Rate Limiting
-		isJSON             bool
-		rateLimit          int
+		isJSON    bool
+		rateLimit int
 
 		// Native XSS Engine & Flag Mapping
-		enableDOM          bool
-		noDOM              bool
-		enableDOMBrowser   bool
-		enableForms        bool
-		enableParamBrute   bool
-		xssFuzz            bool
-		logFile            string
-		headerLongFlag     arrayFlags
-		enableStored       bool
+		enableDOM        bool
+		noDOM            bool
+		enableDOMBrowser bool
+		enableForms      bool
+		enableParamBrute bool
+		xssFuzz          bool
+		logFile          string
+		headerLongFlag   arrayFlags
+		enableStored     bool
 
 		// Version-Matched Intel Flags
-		intelQuery         string
-		noIntel            bool
-		enableNVD          bool
+		intelQuery       string
+		noIntel          bool
+		enableNVD        bool
+		enableMSFSearch  bool
+		wpscanToken      string
+		downloadExploits bool
+		lootDir          string
+
+		// Extensibility & reporting
+		runPlugins bool
+		pluginDir  string
+		writeHTML  bool
+		writeSARIF bool
+
+		// Resume, profiles, and updates
+		resumeScan    bool
+		profileName   string
+		saveProfile   string
+		noUpdateCheck bool
 	)
 
 	// Target & Input
@@ -193,6 +224,20 @@ func main() {
 	flag.StringVar(&intelQuery, "intel-query", "", "Manual product and version query for searchsploit / NVD reference lookup (e.g. 'Apache 2.4.49')")
 	flag.BoolVar(&noIntel, "no-intel", false, "Disable automatic version-matched reference lookup")
 	flag.BoolVar(&enableNVD, "nvd", false, "Query NIST NVD 2.0 REST API for CVEs and CVSS scores")
+	flag.BoolVar(&enableMSFSearch, "msf-search", true, "Use dynamic msfconsole module search in exploit-mapper (default: true)")
+	flag.StringVar(&wpscanToken, "wpscan-token", os.Getenv("WPSCAN_API_TOKEN"), "WPScan API token for WordPress core/plugin/theme CVEs (or WPSCAN_API_TOKEN)")
+	flag.BoolVar(&downloadExploits, "download-exploits", false, "Download raw Exploit-DB entries for mapped EDB-IDs into --loot-dir for manual review")
+	flag.StringVar(&lootDir, "loot-dir", "loot", "Directory for downloaded Exploit-DB references (default: loot)")
+
+	// Plugins, reporting, resume, profiles, and updates
+	flag.BoolVar(&runPlugins, "plugins", false, "Load and execute .so plugins from --plugin-dir")
+	flag.StringVar(&pluginDir, "plugin-dir", plugins.DefaultDir(), "Directory containing NightfallLX plugins (default: ~/.nightfalllx/plugins)")
+	flag.BoolVar(&writeHTML, "html", false, "Write a dark-themed interactive HTML report (<output>.html)")
+	flag.BoolVar(&writeSARIF, "sarif", false, "Write a SARIF 2.1.0 report (<output>.sarif)")
+	flag.BoolVar(&resumeScan, "resume", false, "Resume an interrupted scan from .nightfalllx/state.json")
+	flag.StringVar(&profileName, "profile", "", "Load a saved CLI profile from ~/.nightfalllx/profiles/<name>.json")
+	flag.StringVar(&saveProfile, "save-profile", "", "Save the current CLI configuration as a named profile and exit")
+	flag.BoolVar(&noUpdateCheck, "no-update-check", os.Getenv("NIGHTFALLX_NO_UPDATE_CHECK") == "1", "Disable the startup GitHub release update check")
 
 	// Interactive Mouse Dashboard, Tech Detector, Sitemap & Shodan
 	flag.BoolVar(&isInteractive, "i", false, "Launch interactive mouse-controllable TUI dashboard")
@@ -208,7 +253,7 @@ func main() {
 	flag.StringVar(&shodanKey, "shodan-key", "", "Shodan API Key (optional, defaults to SHODAN_API_KEY env)")
 
 	// Vulnerability Assessment Modules
-	flag.StringVar(&moduleList, "m", "all", "Comma-separated modules: sqli, ssti, lfi, cmdi, xss, cors, redirect, ssrf, jwt, waf, idor, csrf, xxe, nosqli, upload (opt-in), headers, exposure, hostheader, crlf, graphql, protopollution, massassign, deserialize (or 'all')")
+	flag.StringVar(&moduleList, "m", "all", "Comma-separated modules: sqli, ssti, lfi, cmdi, xss, cors, redirect, ssrf, jwt, waf, idor, csrf, xxe, nosqli, upload (opt-in), headers, exposure, hostheader, crlf, graphql, protopollution, massassign, deserialize, exploit-mapper (or 'all')")
 
 	// HTTP Options
 	flag.StringVar(&method, "X", "GET", "HTTP Method: GET, POST, PUT, etc.")
@@ -255,7 +300,7 @@ func main() {
   ██║╚██╗██║██║██║   ██║██╔══██║   ██║   ██╔══╝  ██╔══██║██║     ██║       ██╔═██╗ 
   ██║ ╚████║██║╚██████╔╝██║  ██║   ██║   ██║     ██║  ██║███████╗███████╗ ██╔╝ ██╗
   ╚═╝  ╚═══╝╚═╝ ╚═════╝ ╚═╝  ╚═╝   ╚═╝   ╚═╝     ╚═╝  ╚═╝╚══════╝╚══════╝ ╚═╝  ╚═╝
-              NightfallLX (Go Edition v2.0) - Offensive Assessment Engine`)
+              NightfallLX (Go Edition v2.1) - Offensive Assessment Engine`)
 		fmt.Println("\nUsage:")
 		fmt.Println("  nightfalllx -u <URL> [options]")
 		fmt.Println("  nightfalllx -r <request.txt> [options]")
@@ -273,6 +318,36 @@ func main() {
 	}
 
 	flag.Parse()
+
+	explicitFlags := make(map[string]bool)
+	flag.Visit(func(f *flag.Flag) {
+		explicitFlags[f.Name] = true
+	})
+
+	if profileName != "" {
+		saved, err := profile.Load(profileName)
+		if err != nil {
+			fmt.Printf("\033[31m[!] Could not load profile %q: %v\033[0m\n", profileName, err)
+			os.Exit(1)
+		}
+		if err := profile.Apply(flag.CommandLine, saved, explicitFlags); err != nil {
+			fmt.Printf("\033[31m[!] Could not apply profile %q: %v\033[0m\n", profileName, err)
+			os.Exit(1)
+		}
+		fmt.Printf("\033[32m[+] Loaded profile: %s\033[0m\n", saved.Name)
+	}
+
+	if saveProfile != "" {
+		captured := profile.Capture(flag.CommandLine, "profile", "save-profile")
+		path, err := profile.Save(saveProfile, captured)
+		if err != nil {
+			fmt.Printf("\033[31m[!] Could not save profile: %v\033[0m\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("\033[32m[+] Profile saved to %s\033[0m\n", path)
+		return
+	}
+
 	if noDOM {
 		enableDOM = false
 	}
@@ -280,6 +355,11 @@ func main() {
 	// Merge --header into headersFlag
 	for _, h := range headerLongFlag {
 		_ = headersFlag.Set(h)
+	}
+
+	var globalLimiter *client.RateLimiter
+	if rateLimit > 0 {
+		globalLimiter = client.NewRateLimiter(rateLimit)
 	}
 
 	// Handle XSStrike habit: -m POST maps to -X POST
@@ -296,7 +376,7 @@ func main() {
 	}
 
 	if isVersion {
-		fmt.Println("NightfallLX v2.0.0 (Go Edition) - High-Performance Web Assessment & Recon Suite")
+		fmt.Printf("NightfallLX v%s (Go Edition) - High-Performance Web Assessment & Recon Suite\n", version.Version)
 		return
 	}
 
@@ -421,6 +501,16 @@ func main() {
 		}
 	}
 
+	if !noUpdateCheck && ctx.Err() == nil {
+		updateCtx, cancelUpdate := context.WithTimeout(ctx, 3*time.Second)
+		check, err := update.NewClient().Check(updateCtx)
+		cancelUpdate()
+		if err == nil && check != nil && check.UpdateAvailable {
+			fmt.Printf("\033[33m[!] NightfallLX %s is available (current %s). %s\033[0m\n",
+				check.LatestVersion, check.CurrentVersion, check.URL)
+		}
+	}
+
 	// 6. Standalone Tech Detector Mode
 	if isTech {
 		techTimeout := time.Duration(timeoutSec) * time.Second
@@ -428,6 +518,8 @@ func main() {
 			techTimeout = 15 * time.Second
 		}
 		httpClient := client.NewClient(proxy, techTimeout, insecure, cookie, parsedHeaders)
+		httpClient.SetContext(ctx)
+		httpClient.Limiter = globalLimiter
 		det := detector.NewTechDetector()
 		fmt.Printf("\n\033[1;36m[*] Fingerprinting Technologies & Exact Versions on:\033[0m %s ...\n", rawURL)
 		rep, err := det.Detect(rawURL, httpClient)
@@ -446,6 +538,8 @@ func main() {
 			fmt.Printf("\033[31m[!] Spider init failed: %v\033[0m\n", err)
 			os.Exit(1)
 		}
+		sp.SetContext(ctx)
+		sp.Limiter = globalLimiter
 		sm := sp.Crawl()
 		sitemap.PrintSiteMap(sm)
 		return
@@ -512,6 +606,8 @@ func main() {
 			MatchLines:    parseCodes(matchLinesRaw),
 			FilterLines:   parseCodes(filterLinesRaw),
 			IsSubdomain:   isSubdomain,
+			Context:       ctx,
+			Limiter:       globalLimiter,
 		}
 
 		if len(fuzzCfg.MatchCodes) == 0 && len(fuzzCfg.FilterCodes) == 0 {
@@ -578,11 +674,10 @@ func main() {
 	}
 
 	httpClient := client.NewClient(proxy, time.Duration(timeoutSec)*time.Second, insecure, cookie, parsedHeaders)
+	httpClient.SetContext(ctx)
 	httpClient.ScopeHosts = scopeHosts
 	httpClient.ScopeOff = scopeOff
-	if rateLimit > 0 {
-		httpClient.SetRateLimit(rateLimit)
-	}
+	httpClient.Limiter = globalLimiter
 
 	// Environment variable fallback for login credentials
 	if loginUser == "" {
@@ -642,7 +737,7 @@ func main() {
 	// Crawl & Scan XSS Engine (--crawl)
 	if isCrawlXSS {
 		fmt.Printf("\033[36m[*] Spidering %s (depth=%d, max-urls=%d) to discover endpoints for XSS engine...\033[0m\n", rawURL, spiderDepth, spiderMaxURLs)
-		crawlFindings, err := RunCrawlAndScanXSS(rawURL, spiderDepth, spiderMaxURLs, xssCfg, httpClient, parsedHeaders)
+		crawlFindings, err := RunCrawlAndScanXSSWithContext(ctx, rawURL, spiderDepth, spiderMaxURLs, xssCfg, httpClient, parsedHeaders)
 		if err != nil {
 			fmt.Printf("\033[31m[!] Crawl error: %v\033[0m\n", err)
 			os.Exit(1)
@@ -655,8 +750,15 @@ func main() {
 				fmt.Printf("    [%s] %s on %s (param: %s)\n", f.ConfidenceLevel, f.Title, f.URL, f.Parameter)
 			}
 			if output != "" {
-				_ = reporters.WriteMarkdownReport(&modules.Target{URL: rawURL, Method: "GET"}, crawlFindings, output+".md")
-				_ = reporters.WriteJSONReport(&modules.Target{URL: rawURL, Method: "GET"}, crawlFindings, output+".json")
+				crawlTarget := &modules.Target{URL: rawURL, Method: "GET"}
+				_ = reporters.WriteMarkdownReport(crawlTarget, crawlFindings, output+".md")
+				_ = reporters.WriteJSONReport(crawlTarget, crawlFindings, output+".json")
+				if writeHTML {
+					_ = reporters.WriteHTMLReport(crawlTarget, crawlFindings, output+".html")
+				}
+				if writeSARIF {
+					_ = reporters.WriteSARIFReport(crawlTarget, crawlFindings, output+".sarif")
+				}
 			}
 		}
 		return
@@ -712,9 +814,33 @@ func main() {
 		detector.PrintReport(techRep)
 	}
 
+	// Step 1.4: Load resumable scan state.
+	statePath := state.DefaultPath()
+	var resumeState *state.ScanState
+	if resumeScan {
+		saved, errState := state.Load(statePath)
+		if errState != nil {
+			fmt.Printf("\033[31m[!] Could not load resume state from %s: %v\033[0m\n", statePath, errState)
+			os.Exit(1)
+		}
+		if saved.TargetURL != "" && !strings.EqualFold(strings.TrimRight(saved.TargetURL, "/"), strings.TrimRight(target.URL, "/")) {
+			fmt.Printf("\033[31m[!] Resume state belongs to %s, not %s\033[0m\n", saved.TargetURL, target.URL)
+			os.Exit(1)
+		}
+		if saved.Method != "" && !strings.EqualFold(saved.Method, target.Method) {
+			fmt.Printf("\033[31m[!] Resume state uses method %s, not %s\033[0m\n", saved.Method, target.Method)
+			os.Exit(1)
+		}
+		resumeState = saved
+		fmt.Printf("\033[36m[*] Resuming scan: %d module(s) already complete, %d finding(s) restored\033[0m\n",
+			len(saved.CompletedModules), len(saved.Findings))
+	}
+
 	// Step 1.5: Version-Matched Reference Lookup (Searchsploit & NVD)
 	var intelRep *intel.IntelReport
-	if !noIntel {
+	if resumeState != nil && resumeState.Intel != nil {
+		intelRep = resumeState.Intel
+	} else if !noIntel {
 		var respHeaders http.Header
 		var landingBody string
 		if baseResp, errBase := httpClient.Get(rawURL); errBase == nil && baseResp != nil {
@@ -729,7 +855,7 @@ func main() {
 		pvList := intel.ExtractProductVersions(techs, respHeaders, landingBody, intelQuery)
 		if len(pvList) > 0 {
 			fmt.Printf("\n\033[36m[*] Running Version-Matched Reference Lookup for %d detected component(s)...\033[0m\n", len(pvList))
-			intelRep = intel.RunIntel(rawURL, pvList, enableNVD)
+			intelRep = intel.RunIntelContext(ctx, rawURL, pvList, enableNVD)
 			if intelRep != nil && len(intelRep.Findings) > 0 {
 				fmt.Println("\n\033[1;33m[!] Version-matched intel (not verified)\033[0m")
 				fmt.Printf("    \033[90m%s\033[0m\n", intelRep.Disclaimer)
@@ -750,7 +876,7 @@ func main() {
 		}
 	}
 
-	fmt.Printf("\n\033[1;36mNightfallLX (Go Edition v2.0)\033[0m - Web Assessment Framework\n")
+	fmt.Printf("\n\033[1;36mNightfallLX (Go Edition v%s)\033[0m - Web Assessment Framework\n", version.Version)
 	fmt.Printf("Target:     \033[1m%s\033[0m [%s]\n", target.URL, target.Method)
 	fmt.Printf("Parameters: %v\n", target.Parameters())
 	if target.IsJSON {
@@ -771,43 +897,19 @@ func main() {
 		sqliModule.DefaultDelay = sqliDelaySec
 	}
 
-	xssModule := modules.NewXSSModuleWithConfig(xssCfg)
-
-	availableModules := map[string]modules.Module{
-		"sqli":           sqliModule,
-		"ssti":           modules.NewSSTIModule(),
-		"lfi":            modules.NewLFIModule(),
-		"cmdi":           modules.NewCMDiModule(),
-		"xss":            xssModule,
-		"cors":           modules.NewCORSModule(),
-		"redirect":       modules.NewRedirectModule(),
-		"ssrf":           modules.NewSSRFModule(),
-		"jwt":            modules.NewJWTModule(),
-		"waf":            modules.NewWAFModule(),
-		"idor":           modules.NewIDORModule(),
-		"csrf":           modules.NewCSRFModule(),
-		"xxe":            modules.NewXXEModule(),
-		"nosqli":         modules.NewNoSQLiModule(),
-		"upload":         modules.NewUploadModule(), // Opt-in only
-		"headers":        modules.NewHeadersModule(),
-		"exposure":       modules.NewExposureModule(),
-		"hostheader":     modules.NewHostHeaderModule(),
-		"crlf":           modules.NewCRLFModule(),
-		"graphql":        modules.NewGraphQLModule(),
-		"protopollution": modules.NewProtoPollutionModule(),
-		"massassign":     modules.NewMassAssignModule(),
-		"deserialize":    modules.NewDeserializeModule(),
+	availableModules := modules.Registry(xssCfg)
+	availableModules["sqli"] = sqliModule
+	if exploitMapper, ok := availableModules["exploit-mapper"].(*modules.ExploitMapperModule); ok {
+		exploitMapper.EnableMSFSearch = enableMSFSearch
+		exploitMapper.WPScanToken = strings.TrimSpace(wpscanToken)
+		exploitMapper.NVDAPIKey = strings.TrimSpace(os.Getenv("NVD_API_KEY"))
+		exploitMapper.DownloadExploits = downloadExploits
+		exploitMapper.LootDir = lootDir
 	}
 
 	var activeModules []modules.Module
 	if moduleList == "all" {
-		order := []string{
-			"waf", "headers", "exposure", "sqli", "ssti", "lfi", "cmdi",
-			"xss", "cors", "redirect", "ssrf", "jwt", "idor", "csrf",
-			"xxe", "nosqli", "hostheader", "crlf", "graphql",
-			"protopollution", "massassign", "deserialize",
-		}
-		for _, name := range order {
+		for _, name := range modules.DefaultOrder() {
 			activeModules = append(activeModules, availableModules[name])
 		}
 	} else {
@@ -820,11 +922,45 @@ func main() {
 	}
 
 	var allFindings []*modules.Finding
+	scanState := &state.ScanState{
+		TargetURL:  target.URL,
+		Method:     target.Method,
+		ModuleList: moduleList,
+		Findings:   allFindings,
+		Intel:      intelRep,
+	}
+	if resumeState != nil {
+		allFindings = append(allFindings, resumeState.Findings...)
+		scanState.Findings = allFindings
+		scanState.CompletedModules = append(scanState.CompletedModules, resumeState.CompletedModules...)
+	}
 	for _, mod := range activeModules {
+		if resumeState != nil && resumeState.IsCompleted(mod.Name()) {
+			continue
+		}
+		scanState.PendingModules = append(scanState.PendingModules, mod.Name())
+	}
+	if err := state.Save(statePath, scanState); err != nil {
+		fmt.Printf("\033[33m[!] Warning: could not save resume state: %v\033[0m\n", err)
+	}
+
+	for _, mod := range activeModules {
+		if resumeState != nil && resumeState.IsCompleted(mod.Name()) {
+			fmt.Printf("\033[90m[*] Skipping completed module: %s\033[0m\n", mod.Name())
+			continue
+		}
+		if ctx.Err() != nil {
+			saveInterruptedState(statePath, scanState)
+			os.Exit(130)
+		}
 		fmt.Printf("\033[36m[*] Running module: \033[1m%-14s\033[0m (%s) ...\n", mod.Name(), mod.Description())
 		findings, err := mod.Run(target, httpClient)
 		if err != nil {
 			fmt.Printf("    \033[31m[!] Error running %s: %v\033[0m\n", mod.Name(), err)
+			if ctx.Err() != nil {
+				saveInterruptedState(statePath, scanState)
+				os.Exit(130)
+			}
 			continue
 		}
 		for _, f := range findings {
@@ -839,6 +975,61 @@ func main() {
 			fmt.Printf("    %s \033[1m%s\033[0m (param=%s, confidence=%s)\n", status, f.Title, f.Parameter, f.ConfidenceLevel)
 		}
 		allFindings = append(allFindings, findings...)
+		scanState.Findings = allFindings
+		scanState.MarkCompleted(mod.Name())
+		if err := state.Save(statePath, scanState); err != nil {
+			fmt.Printf("\033[33m[!] Warning: could not save resume state: %v\033[0m\n", err)
+		}
+		if ctx.Err() != nil {
+			saveInterruptedState(statePath, scanState)
+			os.Exit(130)
+		}
+	}
+
+	// Optional runtime plugins.
+	if runPlugins {
+		loadedPlugins := plugins.LoadAll(pluginDir)
+		if len(loadedPlugins) == 0 {
+			fmt.Printf("\033[33m[!] No compatible plugins found in %s\033[0m\n", pluginDir)
+		}
+		for _, loaded := range loadedPlugins {
+			if loaded.Error != nil {
+				fmt.Printf("    \033[31m[!] Plugin %s: %v\033[0m\n", loaded.Path, loaded.Error)
+				continue
+			}
+			if ctx.Err() != nil {
+				saveInterruptedState(statePath, scanState)
+				os.Exit(130)
+			}
+			fmt.Printf("\033[36m[*] Running plugin: \033[1m%s\033[0m ...\n", loaded.Name)
+			result, err := loaded.Plugin.Execute(target.URL, httpClient.HTTPClient())
+			if err != nil {
+				fmt.Printf("    \033[31m[!] Plugin %s failed: %v\033[0m\n", loaded.Name, err)
+				continue
+			}
+			allFindings = append(allFindings, &modules.Finding{
+				Module:          "plugin:" + loaded.Name,
+				Title:           "Plugin result: " + loaded.Name,
+				Severity:        modules.SeverityInfo,
+				Confidence:      100,
+				ConfidenceLevel: modules.ConfidenceConfirmed,
+				URL:             target.URL,
+				Parameter:       "plugin",
+				Detail:          result,
+				DetailFormat:    "text",
+				Evidence:        loaded.Path,
+				Remediation:     "Review the plugin output and validate any observations manually.",
+			})
+			scanState.Findings = allFindings
+			if err := state.Save(statePath, scanState); err != nil {
+				fmt.Printf("\033[33m[!] Warning: could not save resume state: %v\033[0m\n", err)
+			}
+		}
+	}
+
+	if ctx.Err() != nil {
+		saveInterruptedState(statePath, scanState)
+		os.Exit(130)
 	}
 
 	mdFile := output + ".md"
@@ -848,21 +1039,57 @@ func main() {
 	if logFile != "" {
 		_ = reporters.WriteMarkdownReportWithIntel(target, allFindings, intelRep, logFile)
 	}
+	htmlFile := output + ".html"
+	sarifFile := output + ".sarif"
+	if writeHTML {
+		if err := reporters.WriteHTMLReportWithIntel(target, allFindings, intelRep, htmlFile); err != nil {
+			fmt.Printf("\033[33m[!] Could not write HTML report: %v\033[0m\n", err)
+		}
+	}
+	if writeSARIF {
+		if err := reporters.WriteSARIFReportWithIntel(target, allFindings, intelRep, sarifFile); err != nil {
+			fmt.Printf("\033[33m[!] Could not write SARIF report: %v\033[0m\n", err)
+		}
+	}
+	_ = state.Remove(statePath)
 
 	fmt.Println("\n" + strings.Repeat("=", 60))
 	fmt.Printf("\033[1mScan Finished!\033[0m Total Findings: \033[1;32m%d\033[0m\n", len(allFindings))
 	fmt.Printf("Reports saved to:\n  Markdown: \033[32m%s\033[0m\n  JSON:     \033[32m%s\033[0m\n", mdFile, jsonFile)
+	if writeHTML {
+		fmt.Printf("  HTML:     \033[32m%s\033[0m\n", htmlFile)
+	}
+	if writeSARIF {
+		fmt.Printf("  SARIF:    \033[32m%s\033[0m\n", sarifFile)
+	}
 	if logFile != "" {
 		fmt.Printf("  Log:      \033[32m%s\033[0m\n", logFile)
 	}
 	fmt.Println(strings.Repeat("=", 60))
 }
 
+func saveInterruptedState(path string, st *state.ScanState) {
+	if err := state.Save(path, st); err != nil {
+		fmt.Printf("\033[31m[!] Could not save interrupted state: %v\033[0m\n", err)
+		return
+	}
+	fmt.Printf("\n\033[33m[!] Scan interrupted. Progress saved to %s. Resume with --resume.\033[0m\n", path)
+}
+
 // RunCrawlAndScanXSS spiders the target application and executes the XSS module on discovered URLs with parameters or forms.
 func RunCrawlAndScanXSS(targetURL string, depth, maxURLs int, xssCfg *xss.EngineConfig, c *client.Client, customHeaders map[string]string) ([]*modules.Finding, error) {
+	return RunCrawlAndScanXSSWithContext(context.Background(), targetURL, depth, maxURLs, xssCfg, c, customHeaders)
+}
+
+// RunCrawlAndScanXSSWithContext is the cancellable crawl-and-scan entry point.
+func RunCrawlAndScanXSSWithContext(ctx context.Context, targetURL string, depth, maxURLs int, xssCfg *xss.EngineConfig, c *client.Client, customHeaders map[string]string) ([]*modules.Finding, error) {
 	sp, err := sitemap.NewSpider(targetURL, depth, maxURLs)
 	if err != nil {
 		return nil, fmt.Errorf("spider init failed: %w", err)
+	}
+	sp.SetContext(ctx)
+	if c != nil && c.Limiter != nil {
+		sp.Limiter = c.Limiter
 	}
 	sm := sp.Crawl()
 
@@ -953,12 +1180,17 @@ func RunCrawlAndScanXSS(targetURL string, depth, maxURLs int, xssCfg *xss.Engine
 	var allFindings []*modules.Finding
 
 	for _, t := range targets {
+		if ctx.Err() != nil {
+			return allFindings, ctx.Err()
+		}
 		fList, errScan := xssMod.Run(t, c)
 		if errScan == nil && len(fList) > 0 {
 			allFindings = append(allFindings, fList...)
 		}
 	}
 
+	if ctx.Err() != nil {
+		return allFindings, ctx.Err()
+	}
 	return allFindings, nil
 }
-

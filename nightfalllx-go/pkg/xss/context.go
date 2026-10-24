@@ -12,17 +12,17 @@ import (
 type ContextType string
 
 const (
-	ContextHTMLText        ContextType = "html-text"
-	ContextAttributeQuoted ContextType = "attribute-quoted"
+	ContextHTMLText          ContextType = "html-text"
+	ContextAttributeQuoted   ContextType = "attribute-quoted"
 	ContextAttributeUnquoted ContextType = "attribute-unquoted"
-	ContextJSStringSingle  ContextType = "js-string-single"
-	ContextJSStringDouble  ContextType = "js-string-double"
-	ContextJSTemplate      ContextType = "js-template"
-	ContextJSRaw           ContextType = "js-raw"
-	ContextURLAttribute    ContextType = "url-attribute"
-	ContextHTMLComment     ContextType = "html-comment"
-	ContextTagName         ContextType = "tag-name"
-	ContextUnknown         ContextType = "unknown"
+	ContextJSStringSingle    ContextType = "js-string-single"
+	ContextJSStringDouble    ContextType = "js-string-double"
+	ContextJSTemplate        ContextType = "js-template"
+	ContextJSRaw             ContextType = "js-raw"
+	ContextURLAttribute      ContextType = "url-attribute"
+	ContextHTMLComment       ContextType = "html-comment"
+	ContextTagName           ContextType = "tag-name"
+	ContextUnknown           ContextType = "unknown"
 )
 
 // Reflection holds the classified context and node details for a reflected marker.
