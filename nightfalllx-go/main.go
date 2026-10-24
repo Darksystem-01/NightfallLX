@@ -32,6 +32,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 )
@@ -82,32 +83,36 @@ var bloodyBannerLines = []string{
 	"@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@**@@@@@@@@@@@@@@@@@@@@@*@@@@@@@@@@@@@@@@@@@*@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@",
 }
 
+var bannerOnce sync.Once
+
 func printBloodyBanner() {
-	shades := []string{
-		"\033[38;2;160;0;0m",
-		"\033[38;2;190;0;0m",
-		"\033[38;2;220;0;0m",
-		"\033[38;2;255;0;0m",
-		"\033[38;2;255;0;0m",
-		"\033[38;2;255;30;30m",
-		"\033[38;2;255;20;20m",
-		"\033[38;2;255;0;0m",
-		"\033[38;2;235;0;0m",
-		"\033[38;2;205;0;0m",
-		"\033[38;2;175;0;0m",
-		"\033[38;2;150;0;0m",
-		"\033[38;2;130;0;0m",
-		"\033[38;2;110;0;0m",
-	}
-	fmt.Println()
-	for i, line := range bloodyBannerLines {
-		color := "\033[38;2;255;0;0m"
-		if i < len(shades) {
-			color = shades[i]
+	bannerOnce.Do(func() {
+		shades := []string{
+			"\033[38;2;160;0;0m",
+			"\033[38;2;190;0;0m",
+			"\033[38;2;220;0;0m",
+			"\033[38;2;255;0;0m",
+			"\033[38;2;255;0;0m",
+			"\033[38;2;255;30;30m",
+			"\033[38;2;255;20;20m",
+			"\033[38;2;255;0;0m",
+			"\033[38;2;235;0;0m",
+			"\033[38;2;205;0;0m",
+			"\033[38;2;175;0;0m",
+			"\033[38;2;150;0;0m",
+			"\033[38;2;130;0;0m",
+			"\033[38;2;110;0;0m",
 		}
-		fmt.Printf("%s%s\033[0m\n", color, line)
-	}
-	fmt.Printf("\033[38;2;220;20;60m%s\033[0m\n\n", "              [ NightfallLX (Go Edition v2.1) - Offensive Assessment Engine ]")
+		fmt.Println()
+		for i, line := range bloodyBannerLines {
+			color := "\033[38;2;255;0;0m"
+			if i < len(shades) {
+				color = shades[i]
+			}
+			fmt.Printf("%s%s\033[0m\n", color, line)
+		}
+		fmt.Printf("\033[38;2;220;20;60m%s\033[0m\n\n", "              [ NightfallLX (Go Edition v2.1) - Offensive Assessment Engine ]")
+	})
 }
 
 func main() {
@@ -409,6 +414,8 @@ func main() {
 	}
 
 	if targetListFile != "" {
+		printBloodyBanner()
+		fmt.Println("\033[33m⚠️  Authorization Notice: Ensure you have explicit authorization to test target host(s).\033[0m")
 		code := runTargetList(ctx, multiTargetOptions{
 			Path:          targetListFile,
 			BaseOutput:    output,
@@ -450,11 +457,6 @@ func main() {
 		fmt.Printf("NightfallLX v%s (Go Edition) - High-Performance Web Assessment & Recon Suite\n", version.Version)
 		return
 	}
-
-	printBloodyBanner()
-
-	// 0. Authorization Warning Notice
-	fmt.Println("\033[33m⚠️  Authorization Notice: Ensure you have explicit authorization to test target host(s).\033[0m")
 
 	// 1. Process Scope Guard List
 	var scopeHosts []string
@@ -565,6 +567,11 @@ func main() {
 		flag.Usage()
 		return
 	}
+
+	printBloodyBanner()
+
+	// 0. Authorization Warning Notice
+	fmt.Println("\033[33m⚠️  Authorization Notice: Ensure you have explicit authorization to test target host(s).\033[0m")
 
 	if !strings.HasPrefix(rawURL, "http://") && !strings.HasPrefix(rawURL, "https://") {
 		if isHTTPS {
