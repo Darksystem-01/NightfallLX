@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"nightfalllx/pkg/client"
 	"nightfalllx/pkg/detector"
+	"nightfalllx/pkg/devbuster"
 	"nightfalllx/pkg/discovery"
 	"nightfalllx/pkg/fuzzer"
 	"nightfalllx/pkg/intel"
@@ -100,12 +101,17 @@ func main() {
 		shodanKey      string
 		isSiteMap      bool
 		isCrawlXSS     bool
-		spiderDepth    int
-		spiderMaxURLs  int
-		isInteractive  bool
-		targetListFile string
-		enableSPA      bool
-		headersFlag    arrayFlags
+		spiderDepth       int
+		spiderMaxURLs     int
+		isInteractive     bool
+		targetListFile    string
+		enableSPA         bool
+		isDevbuster       bool
+		includeSubdomains bool
+		hideStatusRaw     string
+		statusRaw         string
+		delaySec          float64
+		headersFlag       arrayFlags
 		headers2Flag   arrayFlags
 		cookie2        string
 		scope          string
@@ -254,6 +260,12 @@ func main() {
 	flag.IntVar(&spiderDepth, "depth", 3, "Web crawler recursion depth (default: 3)")
 	flag.IntVar(&spiderMaxURLs, "max-urls", 50, "Max URLs to discover during spidering (default: 50)")
 	flag.BoolVar(&enableSPA, "spa", false, "Enable headless Chrome SPA rendering & client-side route discovery in crawler")
+	flag.BoolVar(&isDevbuster, "devbuster", false, "Modern web application scope-aware crawler & JS bundle route fuzzer (devbuster)")
+	flag.BoolVar(&isDevbuster, "dbuster", false, "Alias for --devbuster")
+	flag.BoolVar(&includeSubdomains, "include-subdomains", false, "Include subdomains in scope during devbuster crawl")
+	flag.StringVar(&hideStatusRaw, "hide-status", "", "Hide status codes in devbuster/crawler (comma-separated, e.g. 403,404)")
+	flag.StringVar(&statusRaw, "status", "", "Only show status codes in devbuster/crawler (comma-separated, e.g. 200,301,302)")
+	flag.Float64Var(&delaySec, "delay", 0, "Delay between requests in seconds (e.g. 0.5)")
 	flag.BoolVar(&isShodan, "shodan", false, "Run Shodan OSINT intelligence reconnaissance on target IP/domain")
 	flag.StringVar(&shodanKey, "shodan-key", "", "Shodan API Key (optional, defaults to SHODAN_API_KEY env)")
 
@@ -308,12 +320,14 @@ func main() {
               NightfallLX (Go Edition v2.1) - Offensive Assessment Engine`)
 		fmt.Println("\nUsage:")
 		fmt.Println("  nightfalllx -u <URL> [options]")
+		fmt.Println("  nightfalllx -u <URL> -devbuster [-w routes.txt] [options]")
 		fmt.Println("  nightfalllx -l <targets.txt> [options]")
 		fmt.Println("  nightfalllx -r <request.txt> [options]")
 		fmt.Println("  nightfalllx -u <URL>/FUZZ -w <wordlist.txt> [fuzzing options]")
 		fmt.Println("  nightfalllx -domain <target.lab> -w <subdomains.txt> [subdomain options]")
 		fmt.Println("\nExamples:")
 		fmt.Println("  nightfalllx -l targets.txt -m sqli,xss -o batch_report")
+		fmt.Println("  nightfalllx -u http://target.lab/ -devbuster -w routes.txt --hide-status 403,404")
 		fmt.Println("  nightfalllx -u http://target.lab/ -map -spa")
 		fmt.Println("  nightfalllx -u http://target.lab/?id=1 -m sqli,lfi -scope target.lab")
 		fmt.Println("  nightfalllx -u http://target.lab/api/user -d '{\"id\":1}' -json -m sqli,idor")
@@ -585,6 +599,54 @@ func main() {
 			shodan.PrintReport(domainTarget, hostInfo, dnsInfo)
 		} else {
 			fmt.Println("\033[33m[!] No Shodan OSINT data found or API limit reached.\033[0m")
+		}
+		return
+	}
+
+	// 6d. Devbuster Modern Route Discovery & Scope-Aware Fuzzer Mode
+	if isDevbuster {
+		dbCfg := &devbuster.Config{
+			TargetURL:         rawURL,
+			Depth:             spiderDepth,
+			Concurrency:       threads,
+			Delay:             time.Duration(delaySec * float64(time.Second)),
+			Timeout:           time.Duration(timeoutSec) * time.Second,
+			Headers:           parsedHeaders,
+			IncludeSubdomains: includeSubdomains,
+			WordlistPath:      wordlist,
+			Browser:           enableSPA,
+			Proxy:             proxy,
+			Insecure:          insecure,
+			Context:           ctx,
+			Limiter:           globalLimiter,
+		}
+		if statusRaw != "" {
+			dbCfg.OnlyStatus = parseCodes(statusRaw)
+		}
+		if hideStatusRaw != "" {
+			dbCfg.HideStatus = parseCodes(hideStatusRaw)
+		}
+
+		crawler, err := devbuster.NewCrawler(dbCfg)
+		if err != nil {
+			fmt.Printf("\033[31m[!] Devbuster init failed: %v\033[0m\n", err)
+			os.Exit(1)
+		}
+
+		findings, err := crawler.Run(ctx)
+		if err != nil && ctx.Err() == nil {
+			fmt.Printf("\033[31m[!] Devbuster error: %v\033[0m\n", err)
+		}
+
+		fmt.Printf("\n\n\033[1;32m[+] Devbuster completed! Total routes discovered: %d\033[0m\n", len(findings))
+
+		if output != "" {
+			jsonStr, errJSON := devbuster.ToJSON(findings)
+			if errJSON == nil {
+				jsonPath := output + ".json"
+				_ = os.WriteFile(jsonPath, []byte(jsonStr), 0644)
+				fmt.Printf("\033[36m[*] Devbuster findings saved to: %s\033[0m\n", jsonPath)
+			}
 		}
 		return
 	}

@@ -322,6 +322,23 @@ nightfalllx -u http://target.lab/ -map -spa -depth 3
 nightfalllx -u http://target.lab/ -crawl -spa
 ```
 
+### 4.12 Devbuster zamonaviy web ilovalar marshrut krouleri va fuzzeri (`-devbuster` / `-dbuster`)
+React, Next.js, Vue va Angular kabi zamonaviy SPA va veb-ilovalarda klassik fuzzerlar topa olmaydigan yashirin marshrutlarni aniqlovchi scope-aware gibrid dvigatel:
+- **Kanonik manzilni oldindan aniqlash (Canonical Origin Detection):** Fuzzingdan oldin `www`/non-`www`, HTTPS va ildiz yo'naltirishlarni tekshirib, haqiqiy kanonik manzilni aniqlaydi (301/308 soxta javoblarining oldini oladi).
+- **JavaScript to'plamlaridan marshrut ajratish (`js:literal`):** Next.js chunklari (`_next/static/chunks/...`) va Webpack to'plamlaridagi barcha string marshrutlarni (`/api/...`, `/dashboard/...`) statik fayllarni (rasmlar, shriftlar, CSS) filtrlagan holda ajratib oladi.
+- **Gibrid krouling va fuzzing:** Lug'atdagi so'zlar bilan birga HTML havolalari va JS marshrutlarini dinamik navbatga qo'shib boradi.
+- **Moslashuvchan status filtrlari:** Keraksiz status kodlarni yashirish (`--hide-status 403,404`) yoki faqat keraklilarni ko'rsatish (`--status 200,301,302`).
+```bash
+# Zamonaviy veb ilovani Devbuster orqali chuqur tahlil qilish:
+nightfalllx -u https://target.lab/ -devbuster -w /usr/share/seclists/Discovery/Web-Content/common.txt
+
+# 403 va 404 xatolarni yashirib, subdomenlarni ham qamrab olish:
+nightfalllx -u https://target.lab/ -devbuster -w routes.txt --hide-status 403,404 --include-subdomains -o devbuster_out
+
+# Headless brauzer renderlash bilan birga ishlatish:
+nightfalllx -u https://target.lab/ -devbuster -w routes.txt -spa -delay 0.5
+```
+
 ---
 
 ## 5. Vhost va subdomen qidirish
@@ -1050,6 +1067,12 @@ curl -i -s "http://target.htb/view.php?file=../../../../etc/passwd"
 | `-depth` | int | `3` | Krouler rekursiya chuqurligi |
 | `-max-urls` | int | `50` | Krouler topadigan maksimal URL soni |
 | `-spa` | bool | `false` | Headless Chrome orqali SPA (React/Vue/Angular) renderlash va marshrutlarni qidirish |
+| `-devbuster` | bool | `false` | Zamonaviy SPA krouleri va JS bundle marshrut fuzzeri (Devbuster) |
+| `-dbuster` | bool | `false` | `-devbuster` bayrog'ining muqobil nomi |
+| `-include-subdomains` | bool | `false` | Devbuster rejimida subdomenlarni scope'ga kiritish |
+| `-hide-status` | string | `""` | Devbuster rejimida yashiriladigan status kodlar (masalan: `403,404`) |
+| `-status` | string | `""` | Devbuster rejimida faqat ko'rsatiladigan status kodlar (masalan: `200,301`) |
+| `-delay` | float | `0` | So'rovlar orasidagi kutish vaqti soniyalarda (masalan: `0.5`) |
 | `-shodan` | bool | `false` | Shodan OSINT qidiruvi |
 | `-shodan-key` | string | `""` | Shodan API kaliti |
 | `-i` | bool | `false` | Interaktiv sichqoncha paneli (TUI) |
