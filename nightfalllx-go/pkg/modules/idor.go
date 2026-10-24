@@ -66,12 +66,18 @@ func (m *IDORModule) Run(target *Target, c *client.Client) ([]*Finding, error) {
 			continue
 		}
 
-		// Candidate test values (numeric +/-1)
+		// Candidate test values (numeric +/-1, plus boundary and 4-digit IDOR samples)
 		var testValues []string
 		if isNumeric {
 			testValues = append(testValues, strconv.Itoa(numVal+1))
 			if numVal > 1 {
 				testValues = append(testValues, strconv.Itoa(numVal-1))
+			}
+			// Sample 4-digit / sequential numeric targets (seq 0 10000)
+			for _, testID := range []string{"0", "1", "2", "100", "1000", "9999", "10000", "0001"} {
+				if testID != origVal && testID != strconv.Itoa(numVal+1) && (numVal <= 1 || testID != strconv.Itoa(numVal-1)) {
+					testValues = append(testValues, testID)
+				}
 			}
 		} else {
 			testValues = append(testValues, origVal+"1", "1", "2")

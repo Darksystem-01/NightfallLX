@@ -337,7 +337,24 @@ nightfalllx -u https://target.lab/ -devbuster -w routes.txt --hide-status 403,40
 
 # Headless brauzer renderlash bilan birga ishlatish:
 nightfalllx -u https://target.lab/ -devbuster -w routes.txt -spa -delay 0.5
-```
+### 4.13 Intellektual avtomatik wordlist tanlash (Auto-Resolving Wordlists)
+NightfallLX endi foydalanuvchidan har safar uzun fayl yo'llarini kiritishni talab qilmaydi.
+- **`-w` ko'rsatilmaganda (Standart rejim):** Har bir modul va amaliyot uchun tizimdagi eng mos standart lug'at avtomatik topiladi va ishlatiladi:
+  - **Klassik Fuzzing & Devbuster:** `/usr/share/wordlists/SecLists/Discovery/Web-Content/common.txt` (4 751 ta so'z) yoki CWES `custom_wordlist.txt`.
+  - **LFI & Path Traversal:** `/usr/share/wordlists/SecLists/Fuzzing/LFI/LFI-Jhaddix.txt` (930 ta vektor).
+  - **Parametrlarni qidirish (`-discover-params`):** `/usr/share/wordlists/SecLists/Discovery/Web-Content/burp-parameter-names.txt` (6 453 ta parametr).
+  - **Brute force & Parollar:** `/usr/share/wordlists/rockyou.txt` yoki CWES `passwords.txt`.
+  - **IDOR & Raqamli PINlar:** `seq 0 10000` / 4 xonali sonlar (`0000..9999`) avtomatik generatsiya qilinadi hamda CWES `pins.txt` yuklanadi.
+- **Tezkor kalit so'zlar (`-w <keyword>`):**
+  - `-w 4digit` yoki `-w idor`: 0 dan 10000 gacha raqamlar ro'yxatini yuklaydi.
+  - `-w colors`: `/home/cyborg/CWES/colors.txt` (ranglar ro'yxati).
+  - `-w cities`: `/home/cyborg/CWES/world-cities.csv` (dunyo shaharlari).
+  - `-w rockyou`: `/usr/share/wordlists/rockyou.txt`.
+  - `-w lfi`: SecLists LFI-Jhaddix ro'yxati.
+  - `-w params`: SecLists burp-parameter-names ro'yxati.
+  - `-w pins`: CWES PIN kodlar ro'yxati.
+  - `-w users`: CWES foydalanuvchilar ro'yxati.
+- **Maxsus fayl yo'li:** Agar foydalanuvchi o'z faylini bersa (masalan: `-w my_list.txt`), aynan shu fayl birinchi darajali ustuvorlik bilan ishlatiladi.
 
 ---
 
@@ -995,7 +1012,7 @@ curl -i -s "http://target.htb/view.php?file=../../../../etc/passwd"
 ### 11.5 Fuzzing va VHost
 | Flag | Turi | Standart qiymat | Tavsifi |
 |---|---|---|---|
-| `-w` | string | `""` | Wordlist fayli yo'li |
+| `-w` | string | `""` | Wordlist fayli yo'li yoki tezkor kalit so'z (`common`, `lfi`, `params`, `rockyou`, `4digit`, `colors`, `cities`, `pins`, `users`; standart: avtomatik aniqlanadi) |
 | `-t` | int | `40` | Parallel goroutine ishchilari soni |
 | `-fuzz` | bool | `false` | Tezkor fuzzing rejimini yoqish |
 | `-subdomain` | bool | `false` | Subdomen va VHost qidiruv rejimini yoqish |

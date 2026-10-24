@@ -1,12 +1,11 @@
 package fuzzer
 
 import (
-	"bufio"
 	"context"
 	"fmt"
 	"net/url"
 	"nightfalllx/pkg/client"
-	"os"
+	"nightfalllx/pkg/wordlists"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -169,28 +168,20 @@ func (f *Fuzzer) loadWords() ([]string, error) {
 	if len(f.cfg.Wordlist) > 0 {
 		return f.cfg.Wordlist, nil
 	}
-	if f.cfg.WordlistPath != "" {
-		file, err := os.Open(f.cfg.WordlistPath)
-		if err != nil {
-			return nil, err
-		}
-		defer file.Close()
-
-		var words []string
-		scanner := bufio.NewScanner(file)
-		for scanner.Scan() {
-			line := strings.TrimSpace(scanner.Text())
-			if line != "" && !strings.HasPrefix(line, "#") {
-				words = append(words, line)
-			}
-		}
-		return words, scanner.Err()
-	}
-
-	if f.cfg.IsSubdomain {
+	if f.cfg.IsSubdomain && f.cfg.WordlistPath == "" {
 		return DefaultSubdomainWordlist, nil
 	}
-	return DefaultLabWordlist, nil
+	words, _, err := wordlists.Resolve(wordlists.CategoryCommon, f.cfg.WordlistPath)
+	if err != nil && f.cfg.WordlistPath != "" {
+		return nil, err
+	}
+	if len(words) == 0 {
+		if f.cfg.IsSubdomain {
+			return DefaultSubdomainWordlist, nil
+		}
+		return DefaultLabWordlist, nil
+	}
+	return words, nil
 }
 
 func (f *Fuzzer) replaceKeyword(template, payload string) string {

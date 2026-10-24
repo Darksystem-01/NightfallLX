@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bufio"
 	"context"
 	"flag"
 	"fmt"
@@ -26,6 +25,7 @@ import (
 	"nightfalllx/pkg/tui"
 	"nightfalllx/pkg/update"
 	"nightfalllx/pkg/version"
+	"nightfalllx/pkg/wordlists"
 	"nightfalllx/pkg/xss"
 	"os"
 	"os/signal"
@@ -285,7 +285,7 @@ func main() {
 	flag.StringVar(&output, "o", "lab_report", "Output report base name")
 
 	// Fast Fuzzing & Subdomain Discovery (ffuf-compatible)
-	flag.StringVar(&wordlist, "w", "", "Wordlist file path for high-speed fuzzing / subdomain discovery")
+	flag.StringVar(&wordlist, "w", "", "Wordlist file path or auto-keyword (common, lfi, params, rockyou, 4digit, colors, cities, pins, users; default: auto-resolved)")
 	flag.IntVar(&threads, "t", 40, "Number of concurrent goroutine workers (default: 40)")
 	flag.BoolVar(&isFuzz, "fuzz", false, "Explicitly enable fast fuzzing mode")
 	flag.BoolVar(&isSubdomain, "subdomain", false, "Enable Subdomain / VHost discovery mode (ffuf-style)")
@@ -627,6 +627,16 @@ func main() {
 			dbCfg.HideStatus = parseCodes(hideStatusRaw)
 		}
 
+		words, srcName, errWords := wordlists.Resolve(wordlists.CategoryCommon, wordlist)
+		if errWords == nil && len(words) > 0 {
+			dbCfg.Wordlist = words
+			if wordlist == "" {
+				fmt.Printf("\033[36m[*] Devbuster: Auto-selected default wordlist: %s (%d candidates)\033[0m\n", srcName, len(words))
+			} else {
+				fmt.Printf("\033[36m[*] Devbuster using %s (%d candidates)\033[0m\n", srcName, len(words))
+			}
+		}
+
 		crawler, err := devbuster.NewCrawler(dbCfg)
 		if err != nil {
 			fmt.Printf("\033[31m[!] Devbuster init failed: %v\033[0m\n", err)
@@ -667,6 +677,16 @@ func main() {
 		}
 		if isSubdomain && domain != "" && parsedHeaders["Host"] == "" {
 			parsedHeaders["Host"] = "FUZZ." + domain
+		}
+		if !isSubdomain {
+			words, srcName, errWords := wordlists.Resolve(wordlists.CategoryCommon, wordlist)
+			if errWords == nil && len(words) > 0 {
+				if wordlist == "" {
+					fmt.Printf("\033[36m[*] No -w provided. Auto-selected default wordlist: %s (%d candidates)\033[0m\n", srcName, len(words))
+				} else {
+					fmt.Printf("\033[36m[*] Fuzzing using %s (%d candidates)\033[0m\n", srcName, len(words))
+				}
+			}
 		}
 		fuzzCfg := &fuzzer.Config{
 			Method:        strings.ToUpper(method),
@@ -848,30 +868,17 @@ func main() {
 
 	// Parameter Discovery (Arjun-style)
 	if discoverParams {
+		words, srcName, errWords := wordlists.Resolve(wordlists.CategoryParams, wordlist)
+		if errWords != nil || len(words) == 0 {
+			words = wordlists.LoadParams()
+			srcName = "SecLists burp-parameter-names.txt"
+		}
 		if wordlist == "" {
-			fmt.Println("\033[33m[!] -discover-params specified without -w wordlist. Using built-in common parameter list...\033[0m")
-		}
-		var words []string
-		if wordlist != "" {
-			if fBytes, err := os.ReadFile(wordlist); err == nil {
-				sc := bufio.NewScanner(strings.NewReader(string(fBytes)))
-				for sc.Scan() {
-					txt := strings.TrimSpace(sc.Text())
-					if txt != "" && !strings.HasPrefix(txt, "#") {
-						words = append(words, txt)
-					}
-				}
-			}
-		}
-		if len(words) == 0 {
-			words = []string{
-				"id", "user", "username", "email", "pass", "password", "token", "key", "admin", "debug",
-				"file", "path", "url", "redirect", "dest", "view", "show", "cat", "page", "role", "cmd",
-				"exec", "action", "query", "search", "lang", "type", "filter", "sort", "data", "callback",
-			}
+			fmt.Printf("\033[36m[*] -discover-params: Auto-selected default wordlist: %s (%d parameters)\033[0m\n", srcName, len(words))
+		} else {
+			fmt.Printf("\033[36m[*] -discover-params using %s (%d parameters)...\033[0m\n", srcName, len(words))
 		}
 
-		fmt.Printf("\033[36m[*] Discovering hidden parameters using %d candidates...\033[0m\n", len(words))
 		pd := discovery.NewParameterDiscovery(50)
 		foundParams, err := pd.Discover(target, httpClient, words)
 		if err != nil {

