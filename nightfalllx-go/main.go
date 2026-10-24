@@ -556,7 +556,11 @@ func main() {
 
 	// Validation
 	if rawURL == "" && domain == "" {
-		flag.Usage()
+		printBloodyBanner()
+		fmt.Println("  \033[33m⚠️  Target not specified.\033[0m")
+		fmt.Println("  Quick start : nightfalllx -u <URL> [options]")
+		fmt.Println("  Full options: nightfalllx -h")
+		fmt.Println()
 		return
 	}
 
