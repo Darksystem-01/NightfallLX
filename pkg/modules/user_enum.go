@@ -39,8 +39,9 @@ var knownFailurePatterns = []string{
 	`(?i)no\s+such\s+user`,
 	`(?i)unknown\s+(?:user|account|email)`,
 	`(?i)email\s+(?:not\s+found|does\s+not\s+exist|unrecognized)`,
-	`(?i)bunday\s+foydalanuvchi\s+mavjud\s+emas`,
-	`(?i)пользовател[ья]\s+не\s+найден`,
+	`(?i)user\s+(?:could\s+not\s+be\s+found|is\s+not\s+valid|not\s+recognized)`,
+	`(?i)could\s+not\s+find\s+(?:user|account)`,
+	`(?i)no\s+account\s+(?:exists?|found)`,
 }
 
 func randomCanaryUser() string {
