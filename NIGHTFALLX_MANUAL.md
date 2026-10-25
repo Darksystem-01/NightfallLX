@@ -38,7 +38,7 @@ The following table documents **every single CLI flag and configuration property
 | `-H2 <string>` | Secondary custom authorization header for IDOR/RBAC testing (repeatable for multiple headers). | `nightfalllx -u "http://target.lab/api" -H "Auth: Bearer tok1" -H2 "Auth: Bearer tok2" -m idor` |
 | `-osint` | Runs comprehensive passive OSINT reconnaissance: crt.sh Certificate Transparency, DNS records, SPF/DMARC email spoofing audit, CNAME takeover, and Wayback Machine archive discovery. | `nightfalllx -osint -domain example.com`<br>`nightfalllx -osint -u https://target.lab -timeout 25` |
 | `-shodan` | Executes Shodan OSINT intelligence lookup: retrieves public IP allocations, open ports, software banners, hostnames, and known CVEs. | `nightfalllx -shodan -u http://target.lab` |
-| `-shodan-key <str>` | Custom Shodan API key. Overrides built-in defaults or the `SHODAN_API_KEY` environment variable. | `nightfalllx -shodan -u http://target.lab -shodan-key "API_KEY_HERE"` |
+| `-shodan-key <str>` | Custom Shodan API key. Reads from the `SHODAN_API_KEY` environment variable if omitted. | `nightfalllx -shodan -u http://target.lab -shodan-key "YOUR_KEY"` |
 | `-tech` | Deep Wappalyzer-grade technology stack and exact version fingerprinting (Web Server, PHP, Frameworks, Template Engines, Security Headers). | `nightfalllx -tech -u http://target.lab` |
 | `-map` | Spiders the target web architecture recursively and produces a structured sitemap. Extracts embedded endpoints from JavaScript files and parses `robots.txt` / `sitemap.xml`. | `nightfalllx -map -u http://target.lab -depth 3 -max-urls 100` |
 | `-spider` | Alias for `-map`. Executes recursive web crawler. | `nightfalllx -spider -u http://target.lab` |

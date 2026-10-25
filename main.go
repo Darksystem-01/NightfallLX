@@ -145,7 +145,7 @@ func main() {
 	flag.BoolVar(&isMineParams, "mine-params", false, "Run hidden parameter miner to discover undocumented parameters")
 	flag.BoolVar(&isMineParams, "param-miner", false, "Alias for --mine-params")
 	flag.BoolVar(&isShodan, "shodan", false, "Run Shodan OSINT intelligence reconnaissance on target IP/domain")
-	flag.StringVar(&shodanKey, "shodan-key", "", "Shodan API Key (optional, defaults to built-in or SHODAN_API_KEY env)")
+	flag.StringVar(&shodanKey, "shodan-key", "", "Shodan API Key (optional, reads from SHODAN_API_KEY environment variable)")
 	flag.BoolVar(&isOSINT, "osint", false, "Run comprehensive passive OSINT reconnaissance (crt.sh, DNS, SPF/DMARC, Wayback Archive)")
 
 	// Vulnerability Assessment Modules
@@ -252,7 +252,7 @@ ASSESSMENT, OSINT & RECON:
   -shodan          Run Shodan OSINT reconnaissance (subdomains, ports, CVEs)
   -osint           Comprehensive passive OSINT (crt.sh, DNS, SPF/DMARC, Wayback Archive)
   -mine-params     Run automated hidden parameter miner (reflection/diff analysis)
-  -shodan-key str  Shodan API Key (optional, defaults to built-in key)
+  -shodan-key str  Shodan API Key (optional, reads from SHODAN_API_KEY env)
   -m string        Modules to run: sqli, ssti, lfi, cmdi, xss, cors, redirect, ssrf, jwt, waf (default: "all")
 
 HIGH-SPEED FUZZING & VHOSTS (ffuf-style):
