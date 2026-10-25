@@ -1,104 +1,128 @@
-# NightfallLX
+# NightfallLX (v2.0)
 
-[![Go](https://img.shields.io/badge/go-1.20%2B-blue.svg)](https://golang.org/)
-[![Python](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/)
+[![Go](https://img.shields.io/badge/go-1.21%2B-blue.svg)](https://golang.org/)
+[![Version](https://img.shields.io/badge/version-2.0.0-purple.svg)](https://github.com/Darksystem-01/NightfallLX)
 [![Tests](https://img.shields.io/badge/tests-passing-brightgreen.svg)](https://github.com/Darksystem-01/NightfallLX/actions)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
-**Next-Generation High-Performance Web Vulnerability Assessment & Recon Suite**
+**Next-Generation High-Performance Web Assessment, Vulnerability Scanner & Deep OSINT Recon Suite**
 
-NightfallLX is an evidence-first, multi-threaded security assessment and web fuzzing platform (with both high-speed Go runtime and modular Python framework) designed for bug bounty hunters, CTF players, and security engineers.
-
----
-
-## ⚡ Key Highlights
-
-- 🖱️ **Interactive Mouse-Controlled TUI Dashboard (`nightfalllx -i`):** Cyberpunk terminal interface with full ANSI SGR mouse click navigation and keyboard support.
-- 🔍 **Deep Technology & Exact Version Detector (`nightfalllx --tech`):** Wappalyzer-grade identification of web servers (Apache, Nginx, IIS), exact language runtimes (e.g. PHP 8.2.10 via headers & Easter Eggs), frameworks (Laravel, Django, Spring Boot, Express, Rails), template engines (Blade, Twig, Jinja2, Smarty, Thymeleaf), frontend libraries, and defensive security header audits.
-- 📬 **Burp Suite Raw HTTP Request Parser (`-r request.txt`):** Native parsing of raw HTTP requests exported from Burp Suite (headers, cookies, query/POST params, and `*`/`FUZZ` injection markers).
-- 🌐 **ffuf-Compatible Subdomain & VHost Finder (`--sub`):** High-speed virtual host and subdomain fuzzing with **Auto-Calibration (`-ac`)** to automatically eliminate wildcard/catch-all false positives, paired with rich matchers and filters (`-mc`, `-fc`, `-ms`, `-fs`, `-mw`, `-fw`, `-ml`, `-fl`).
-- ⚡ **Mega-Fast 1,800+ req/sec Goroutine Fuzzer:** Ultra-fast directory and parameter fuzzing with zero runtime dependencies.
-- 🛡️ **10 Automated Vulnerability Modules:** Differential SQLi, SSTI, LFI, CMDi, XSS, CORS, SSRF, Open Redirect, JWT misconfiguration, and WAF fingerprinting.
-- 📋 **Executive Lab Reports:** Automatic generation of Markdown (`lab_report.md`) and JSON (`lab_report.json`) with ready-to-replay `curl` commands.
+NightfallLX is an evidence-first, multi-threaded offensive and defensive security platform written in pure **Go (Golang)**. Designed for penetration testers, bug bounty hunters, red teams, and security researchers, it consolidates web vulnerability discovery, passive OSINT reconnaissance, high-speed fuzzing, race condition testing, and secret detection into a single, dependency-free binary.
 
 ---
 
-## 🚀 One-Step Global Installation
+## ⚡ Key Capabilities & Modules
 
-Any user can clone the repository and install `nightfalllx` globally into their terminal with a single command:
+### 1. 🔍 Deep Passive OSINT Reconnaissance (`-osint`)
+- **Certificate Transparency (crt.sh):** Passively discovers hidden subdomains and historical SSL certificates without sending a single packet to the target.
+- **DNS & Email Spoofing Auditing:** Automatic verification of `SPF` and `_dmarc.<domain>` records; flags **Missing DMARC (CEO Fraud / Phishing risk)** and permissive `+all` SPF policies.
+- **Subdomain Takeover Detection:** Resolves CNAME records against signatures for abandoned third-party services (GitHub Pages, AWS S3, Heroku, Azure, Ghost, Surge, Fastly, etc.).
+- **Wayback Machine Integration:** Fetches historical URLs and extracts sensitive files (`.sql`, `.env`, `.bak`, `.config`, `.json`, unlisted `/api/` routes) from web.archive.org.
+- **Cloud & Network Intelligence:** Reverse DNS, BGP ASN, and Anycast CDN identification (Cloudflare, AWS, Google Cloud, Azure, DigitalOcean, Linode).
+
+### 2. 🧠 Intelligent User Enumeration with Differential Auto-Regex (`-m userenum`)
+- **Canary Baseline Calibration:** Dispatches non-existent canary usernames to establish baseline error responses.
+- **Auto-Regex Inference:** Automatically identifies the failure pattern and synthesizes differential regexes (e.g. `(?i)user.*not\s*found`) without manual regex configuration.
+- **Timing & Discrepancy Detection:** Flags existing users (`admin`, `root`, `support`) via response divergence, HTTP status shifts, and password-hashing execution latency (>180ms).
+
+### 3. ⚡ Nanosecond-Synchronized Race Condition Engine (`-race`)
+- **Turbo Intruder Gate-Sync:** Pre-builds HTTP requests in memory and releases 20–50 concurrent goroutines simultaneously via channel gate closure.
+- **Limit Bypass & Collision Detection:** Detects concurrency flaws (coupon duplication, balance deduction, double redeem) with false-positive filtering for dynamic tokens and timestamps.
+
+### 4. 🔑 Secrets & Credential Leak Detection (`-m secrets`)
+- **TruffleHog-Grade Detection:** Real-time scanning of HTML responses and linked JavaScript bundles.
+- **14+ Signatures:** GitHub PATs, AWS Access Keys, Google Cloud APIs, Stripe Keys, Slack/Telegram Bot Tokens, JWTs, RSA/EC Private Keys, and Database URIs with automatic Shannon entropy analysis.
+
+### 5. 🧬 Nuclei YAML DSL Engine (`-templates`)
+- Native parser and runner for Nuclei v3 YAML templates (`status`, `word`, `regex` matchers with `and`/`or` conditions).
+- Run custom community exploit templates directly with zero external tool dependencies.
+
+### 6. 🔌 High-Speed TCP Port Scanner & CVE Lookup (`-scan`)
+- Concurrent TCP port scanner (`top100`, port ranges like `1-1024`, or comma-separated lists like `80,443,135,445`).
+- Banner grabbing and automatic query against NIST NVD CVE databases.
+
+### 7. 🛡️ Advanced WAF Evasion & Adaptive Throttling
+- **Adaptive Throttling (`-adaptive`):** Automatically throttles concurrency and introduces jitter upon encountering HTTP 429 / 403 responses.
+- **Fingerprint Rotation (`-rotate-ua`):** Dynamically cycles realistic browser User-Agent headers.
+- **Header Tampering & Chunking (`-tamper-headers`, `-chunked`, `-raw`):** Injects originating IP headers, chunked transfer encoding, and raw TLS socket bypasses.
+
+### 8. 📊 Professional Multi-Format Reporting
+- **Cyber HTML Dashboard (`-report-html`):** Standalone offline interactive dark-mode dashboard.
+- **SARIF v2.1.0 (`-report-sarif`):** Standard SARIF output for GitHub Code Scanning, GitLab CI, and DefectDojo.
+- **Structured JSON & Markdown:** Machine-readable logs and ready-to-run `curl` reproduction commands.
+
+---
+
+## 🚀 Quick Installation
+
+### Build from Source (Go 1.21+)
 
 ```bash
 git clone https://github.com/Darksystem-01/NightfallLX.git
-cd NightfallLX
-./install.sh
+cd NightfallLX/nightfalllx-go
+go build -ldflags="-s -w" -o nightfalllx.exe .
 ```
 
-Now `nightfalllx` is available globally from **any directory** in your terminal!
-
+On Linux/macOS:
 ```bash
-nightfalllx --version
-```
-
----
-
-## 🎮 Usage Guide
-
-### 1. Interactive Mouse Dashboard
-Launch the mouse-controllable TUI dashboard with neon cyber graphics:
-```bash
-nightfalllx -i
-# or
-nightfalllx --ui
-```
-
-### 2. Deep Technology & Exact Version Fingerprinting
-Scan web servers, exact PHP versions, frameworks, and template engines:
-```bash
-nightfalllx --tech -u http://target.lab
-```
-
-### 3. Burp Suite Raw Request Assessment
-Pass an exported Burp Suite request file directly to the scanner:
-```bash
-nightfalllx -r request.txt -m all -p http://127.0.0.1:8080
-```
-
-### 4. Subdomain & VHost Fuzzing (ffuf-style)
-Discover hidden virtual hosts on a target IP with automatic wildcard calibration:
-```bash
-nightfalllx -sub -u http://10.129.20.10 -domain target.htb -t 50
-```
-
-### 5. High-Speed Web Fuzzing
-Fuzz web endpoints with custom status codes and size/word filters:
-```bash
-nightfalllx -u http://target.lab/FUZZ -w wordlist.txt -t 50 -mc 200,301,302,403 -fw 12
-```
-
-### 6. Comprehensive Vulnerability Assessment
-Run all 10 security testing modules with Burp Suite proxy integration:
-```bash
-nightfalllx -u http://target.lab/app.php?id=1 -m all -p http://127.0.0.1:8080 -o my_audit
-```
-
-### 7. Diagnostics & Troubleshooting
-Test your DNS, TCP, TLS, and proxy connectivity:
-```bash
-nightfalllx --doctor -u http://target.lab -p http://127.0.0.1:8080
+go build -ldflags="-s -w" -o nightfalllx .
+chmod +x nightfalllx
+sudo mv nightfalllx /usr/local/bin/
 ```
 
 ---
 
-## 🧪 Testing
+## 🎮 CLI Usage Examples
 
-To run the complete test suites:
+### 1. Passive OSINT Reconnaissance
+```bash
+nightfalllx -osint -domain target.com
+```
+
+### 2. High-Speed Web Fuzzing with Auto-Regex Filtering
+```bash
+nightfalllx -u "http://target.lab/FUZZ" -w wordlist.txt -auto-regex -t 40
+```
+
+### 3. User Enumeration with Differential Analysis
+```bash
+nightfalllx -u "http://target.lab/login" -X POST -d "username=admin&password=123" -m userenum
+```
+
+### 4. Turbo Race Condition Attack (Limit Bypass)
+```bash
+nightfalllx -u "http://target.lab/api/redeem" -X POST -d '{"coupon":"FREE2026"}' -race -race-threads 25 -race-rounds 2
+```
+
+### 5. Full Vulnerability & Secrets Audit
+```bash
+nightfalllx -u "http://target.lab/?id=1" -m all -p http://127.0.0.1:8080 -report-html report.html -report-sarif report.sarif
+```
+
+### 6. Fast Port Scan with CVE Enrichment
+```bash
+nightfalllx -scan -domain target.lab -scan-ports "80,443,8080,8443" -scan-cve
+```
+
+### 7. Run Nuclei Community Templates
+```bash
+nightfalllx -u "http://target.lab" -templates ./nuclei-templates/http/cves/
+```
+
+### 8. Environment & TLS Diagnostics
+```bash
+nightfalllx -doctor -u https://target.lab
+```
+
+---
+
+## 🧪 Verification & Tests
+
+To execute the entire 15-package unit and integration test suite:
 
 ```bash
-# Go test suite (0.02s)
-cd nightfalllx-go && go test -v ./...
-
-# Python test suite (43 passed)
-PYTHONPATH=. pytest
+cd nightfalllx-go
+go test -v -count=1 ./...
 ```
 
 ---
@@ -106,3 +130,9 @@ PYTHONPATH=. pytest
 ## 📜 License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+---
+
+## ⚠️ Disclaimer
+
+NightfallLX is developed for authorized penetration testing, security research, and vulnerability assessments only. Testing target systems without explicit prior mutual consent is illegal.
