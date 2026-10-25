@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"nightfalllx/pkg/client"
 	"os"
+	"regexp"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -26,26 +27,49 @@ type Result struct {
 
 // Config controls fuzzer execution.
 type Config struct {
-	URL           string
-	WordlistPath  string
-	Wordlist      []string
-	Method        string
-	Data          string
-	Headers       map[string]string
-	Threads       int
-	Timeout       time.Duration
-	Proxy         string
-	Insecure      bool
-	AutoCalibrate bool
-	IsSubdomain   bool
-	MatchCodes    map[int]bool
-	FilterCodes   map[int]bool
-	MatchSizes    map[int]bool
-	FilterSizes   map[int]bool
-	MatchWords    map[int]bool
-	FilterWords   map[int]bool
-	MatchLines    map[int]bool
-	FilterLines   map[int]bool
+	URL             string
+	WordlistPath    string
+	Wordlist        []string
+	Method          string
+	Data            string
+	Headers         map[string]string
+	Threads         int
+	Timeout         time.Duration
+	Proxy           string
+	Insecure        bool
+	AutoCalibrate   bool
+	IsSubdomain     bool
+	MatchCodes      map[int]bool
+	FilterCodes     map[int]bool
+	MatchSizes      map[int]bool
+	FilterSizes     map[int]bool
+	MatchWords      map[int]bool
+	FilterWords     map[int]bool
+	MatchLines      map[int]bool
+	FilterLines     map[int]bool
+	RateLimit       int
+	MaxRetries      int
+	RetryDelay      time.Duration
+	HTTP2           bool
+	RawHTTP         bool
+	HeaderTampering bool
+	Chunked         bool
+	MatchRegexStr   string
+	FilterRegexStr  string
+	MatchRegex      *regexp.Regexp
+	FilterRegex     *regexp.Regexp
+	AutoRegex       bool
+
+	// Adaptive enables WAF-aware throttling: exponential backoff on 429 /
+	// repeated 403 responses, dynamic thread reduction, jitter and rotated
+	// browser User-Agent fingerprints.
+	Adaptive             bool
+	AdaptiveMinThreads   int
+	AdaptiveJitter       time.Duration
+	AdaptiveBackoffBase  time.Duration
+	AdaptiveMaxBackoff   time.Duration
+	AdaptiveForbiddenMax int
+	RotateUserAgent      bool
 }
 
 // DefaultLabWordlist is a general web discovery wordlist.
@@ -87,8 +111,10 @@ type Fuzzer struct {
 	total       int
 	resLock     sync.Mutex
 	startTime   time.Time
-	hasBaseline bool
-	baseline    struct {
+	adaptive      *AdaptiveController
+	hasBaseline   bool
+	inferredRegex *regexp.Regexp
+	baseline      struct {
 		StatusCode int
 		Bytes      int
 		Words      int
@@ -150,10 +176,43 @@ func NewFuzzer(cfg *Config) *Fuzzer {
 	}
 
 	c := client.NewClient(cfg.Proxy, cfg.Timeout, cfg.Insecure, "", nil)
-	return &Fuzzer{
+	if cfg.RateLimit > 0 {
+		c.SetRateLimit(cfg.RateLimit)
+	}
+	if cfg.MaxRetries > 0 {
+		c.SetRetry(cfg.MaxRetries, cfg.RetryDelay)
+	}
+	c.SetHTTP2(cfg.HTTP2)
+	c.SetHeaderTampering(cfg.HeaderTampering)
+	c.SetChunkedEncoding(cfg.Chunked)
+
+	if cfg.MatchRegexStr != "" && cfg.MatchRegex == nil {
+		if re, err := regexp.Compile(cfg.MatchRegexStr); err == nil {
+			cfg.MatchRegex = re
+		}
+	}
+	if cfg.FilterRegexStr != "" && cfg.FilterRegex == nil {
+		if re, err := regexp.Compile(cfg.FilterRegexStr); err == nil {
+			cfg.FilterRegex = re
+		}
+	}
+
+	f := &Fuzzer{
 		cfg:    cfg,
 		client: c,
 	}
+	if cfg.Adaptive {
+		f.adaptive = NewAdaptiveController(AdaptiveConfig{
+			MaxConcurrency:     cfg.Threads,
+			MinConcurrency:     cfg.AdaptiveMinThreads,
+			BackoffBase:        cfg.AdaptiveBackoffBase,
+			MaxBackoff:         cfg.AdaptiveMaxBackoff,
+			Jitter:             cfg.AdaptiveJitter,
+			ForbiddenThreshold: cfg.AdaptiveForbiddenMax,
+			RotateUserAgents:   cfg.RotateUserAgent,
+		})
+	}
+	return f
 }
 
 func (f *Fuzzer) loadWords() ([]string, error) {
@@ -223,6 +282,21 @@ func (f *Fuzzer) calibrate() {
 		f.baseline.Lines = resp.Lines
 		fmt.Printf("\033[33m[::] Auto-calibration (-ac): baseline wildcard detected (status %d, %d bytes, %d words, %d lines) -> auto-filtered\033[0m\n",
 			resp.StatusCode, resp.Bytes, resp.Words, resp.Lines)
+
+		if f.cfg.AutoRegex && resp.Body != "" {
+			patterns := []string{
+				`(?i)(not\s+found|404\s+not\s+found|page\s+not\s+found|does\s+not\s+exist)`,
+				`(?i)(invalid\s+(?:user|username|request|parameter|token|key|credentials)|user(?:name)?\s+not\s+found)`,
+				`(?i)(no\s+results?\s+found|nothing\s+found)`,
+			}
+			for _, pat := range patterns {
+				if re, err := regexp.Compile(pat); err == nil && re.MatchString(resp.Body) {
+					f.inferredRegex = re
+					fmt.Printf("\033[1;35m[::] Auto-Regex (-auto-regex): Inferred differential filter regex: '%s' -> auto-filtered\033[0m\n", pat)
+					break
+				}
+			}
+		}
 	}
 }
 
@@ -294,9 +368,62 @@ func (f *Fuzzer) processWord(word string) {
 		customHeaders[f.replaceKeyword(k, word)] = f.replaceKeyword(v, word)
 	}
 
-	resp, err := f.client.Request(f.cfg.Method, reqURL, reqData, customHeaders)
+	if f.adaptive != nil {
+		f.adaptive.Acquire()
+		defer f.adaptive.Release()
+		if ua := f.adaptive.UserAgent(); ua != "" {
+			customHeaders["User-Agent"] = ua
+		}
+	}
+
+	if f.cfg.HeaderTampering {
+		for k, v := range client.BypassHeaders() {
+			if _, ok := customHeaders[k]; !ok {
+				customHeaders[k] = v
+			}
+		}
+	}
+
+	var resp *client.Response
+	var err error
+	if f.cfg.RawHTTP {
+		u, _ := url.Parse(reqURL)
+		path := u.RequestURI()
+		if path == "" {
+			path = "/"
+		}
+		var rawBuf strings.Builder
+		rawBuf.WriteString(fmt.Sprintf("%s %s HTTP/1.1\r\n", f.cfg.Method, path))
+		rawBuf.WriteString(fmt.Sprintf("Host: %s\r\n", u.Host))
+		for k, v := range customHeaders {
+			if !strings.EqualFold(k, "Host") {
+				rawBuf.WriteString(fmt.Sprintf("%s: %s\r\n", k, v))
+			}
+		}
+		if reqData != "" {
+			if f.cfg.Chunked {
+				rawBuf.WriteString("Transfer-Encoding: chunked\r\n")
+			} else {
+				rawBuf.WriteString(fmt.Sprintf("Content-Length: %d\r\n", len(reqData)))
+			}
+		}
+		rawBuf.WriteString("Connection: close\r\n\r\n")
+		if reqData != "" {
+			if f.cfg.Chunked {
+				rawBuf.Write(client.ChunkedBody([]byte(reqData)))
+			} else {
+				rawBuf.WriteString(reqData)
+			}
+		}
+		resp, err = f.client.RawRequest(reqURL, []byte(rawBuf.String()))
+	} else {
+		resp, err = f.client.Request(f.cfg.Method, reqURL, reqData, customHeaders)
+	}
 	if err != nil || resp == nil {
 		return
+	}
+	if f.adaptive != nil {
+		f.adaptive.Observe(resp.StatusCode)
 	}
 
 	// Auto-calibration baseline filtering (compound check: status AND size AND words/lines)
@@ -336,6 +463,19 @@ func (f *Fuzzer) processWord(word string) {
 		return
 	}
 	if len(f.cfg.MatchLines) > 0 && !f.cfg.MatchLines[resp.Lines] {
+		return
+	}
+
+	// 5. Inferred Auto-Regex filtering
+	if f.inferredRegex != nil && f.inferredRegex.MatchString(resp.Body) {
+		return
+	}
+
+	// 6. User-specified Regex matching & filtering
+	if f.cfg.FilterRegex != nil && f.cfg.FilterRegex.MatchString(resp.Body) {
+		return
+	}
+	if f.cfg.MatchRegex != nil && !f.cfg.MatchRegex.MatchString(resp.Body) {
 		return
 	}
 
@@ -394,6 +534,9 @@ func (f *Fuzzer) printBanner() {
 	fmt.Printf("   :: Threads       : \033[1m%d goroutines\033[0m\n", f.cfg.Threads)
 	if f.cfg.Proxy != "" {
 		fmt.Printf("   :: Proxy         : %s\n", f.cfg.Proxy)
+	}
+	if f.adaptive != nil {
+		fmt.Printf("   :: Adaptive WAF  : \033[33mON\033[0m (jitter %v, UA rotation %v)\n", f.cfg.AdaptiveJitter, f.cfg.RotateUserAgent)
 	}
 	fmt.Printf("\033[36m________________________________________________\033[0m\n\n")
 }

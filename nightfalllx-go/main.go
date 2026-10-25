@@ -8,8 +8,13 @@ import (
 	"nightfalllx/pkg/detector"
 	"nightfalllx/pkg/fuzzer"
 	"nightfalllx/pkg/modules"
+	"nightfalllx/pkg/nuclei_engine"
+	"nightfalllx/pkg/osint"
 	"nightfalllx/pkg/parser"
+	"nightfalllx/pkg/portscan"
+	"nightfalllx/pkg/race"
 	"nightfalllx/pkg/reporters"
+	"nightfalllx/pkg/secrets"
 	"nightfalllx/pkg/shodan"
 	"nightfalllx/pkg/sitemap"
 	"nightfalllx/pkg/troubleshoot"
@@ -58,6 +63,9 @@ func main() {
 		insecure       bool
 		isHTTPS        bool
 		output         string
+		reportHTML     string
+		reportSARIF    string
+		reportJSON     string
 		wordlist       string
 		threads        int
 		matchCodesRaw  string
@@ -79,12 +87,36 @@ func main() {
 		isSiteMap      bool
 		spiderDepth    int
 		spiderMaxURLs  int
+		isMineParams   bool
 		isInteractive  bool
 		headersFlag    arrayFlags
 		headers2Flag   arrayFlags
 		cookie2        string
 		scope          string
 		scopeOff       bool
+		rateLimit      int
+		maxRetries     int
+		retryDelayMs   int
+		enableHTTP2    bool
+		rawHTTP        bool
+		tamperHeaders  bool
+		chunkedBody    bool
+		adaptive       bool
+		jitterMs       int
+		rotateUA       bool
+		adaptiveMin    int
+		isScan         bool
+		scanPorts      string
+		scanCVE        bool
+		isRace         bool
+		raceThreads    int
+		raceRounds     int
+		templatesPath  string
+		templateTags   string
+		matchRegexStr  string
+		filterRegexStr string
+		autoRegex      bool
+		isOSINT        bool
 	)
 
 	// Target & Input
@@ -110,11 +142,28 @@ func main() {
 	flag.BoolVar(&isSiteMap, "crawl", false, "Alias for --map")
 	flag.IntVar(&spiderDepth, "depth", 3, "Web crawler recursion depth (default: 3)")
 	flag.IntVar(&spiderMaxURLs, "max-urls", 50, "Max URLs to discover during spidering (default: 50)")
+	flag.BoolVar(&isMineParams, "mine-params", false, "Run hidden parameter miner to discover undocumented parameters")
+	flag.BoolVar(&isMineParams, "param-miner", false, "Alias for --mine-params")
 	flag.BoolVar(&isShodan, "shodan", false, "Run Shodan OSINT intelligence reconnaissance on target IP/domain")
 	flag.StringVar(&shodanKey, "shodan-key", "", "Shodan API Key (optional, defaults to built-in or SHODAN_API_KEY env)")
+	flag.BoolVar(&isOSINT, "osint", false, "Run comprehensive passive OSINT reconnaissance (crt.sh, DNS, SPF/DMARC, Wayback Archive)")
 
 	// Vulnerability Assessment Modules
-	flag.StringVar(&moduleList, "m", "all", "Comma-separated modules: sqli, ssti, lfi, cmdi, xss, cors, redirect, ssrf, jwt, waf, idor, csrf, xxe, nosqli, upload, headers, exposure, hostheader, crlf (or 'all')")
+	flag.StringVar(&moduleList, "m", "all", "Comma-separated modules: sqli, ssti, lfi, cmdi, xss, cors, redirect, ssrf, jwt, waf, idor, csrf, xxe, nosqli, upload, headers, exposure, hostheader, crlf, secrets, race, userenum (or 'all')")
+
+	// Network Port Scanning
+	flag.BoolVar(&isScan, "scan", false, "Enable fast TCP port scanning mode")
+	flag.StringVar(&scanPorts, "scan-ports", "top100", "Port range or profile: 'top100', '1-1024', or '80,443,8080'")
+	flag.BoolVar(&scanCVE, "scan-cve", false, "Enrich open ports with live NIST NVD CVE lookup")
+
+	// Race Condition Testing
+	flag.BoolVar(&isRace, "race", false, "Run nanosecond-synchronized race condition & limit bypass attack")
+	flag.IntVar(&raceThreads, "race-threads", 20, "Number of concurrent burst requests for race attack (default: 20)")
+	flag.IntVar(&raceRounds, "race-rounds", 2, "Number of burst rounds to execute (default: 2)")
+
+	// Nuclei Template DSL Engine
+	flag.StringVar(&templatesPath, "templates", "", "Path to Nuclei YAML template file or directory to execute")
+	flag.StringVar(&templateTags, "template-tags", "", "Comma-separated tag filter for Nuclei templates (e.g. 'cve,misconfig')")
 
 	// HTTP Options
 	flag.StringVar(&method, "X", "GET", "HTTP Method: GET, POST, PUT, etc.")
@@ -122,11 +171,25 @@ func main() {
 	flag.Var(&headersFlag, "H", "Custom HTTP Header (can repeat, e.g. -H 'Host: FUZZ.target.lab')")
 	flag.StringVar(&cookie, "b", "", "Cookie header value")
 	flag.StringVar(&proxy, "p", "", "HTTP proxy URL (e.g. http://127.0.0.1:8080 for Burp Suite)")
+	flag.IntVar(&rateLimit, "rate", 0, "Max requests per second rate limit (default: 0 unlimited)")
+	flag.IntVar(&maxRetries, "retry", 0, "Max retry attempts on 429/503 or dropped connection (default: 0)")
+	flag.IntVar(&retryDelayMs, "retry-delay", 500, "Base retry delay in ms for exponential backoff (default: 500)")
+	flag.BoolVar(&enableHTTP2, "http2", true, "Enable HTTP/2 support (default: true)")
+	flag.BoolVar(&rawHTTP, "raw", false, "Use raw TCP/TLS socket HTTP mode")
+	flag.BoolVar(&tamperHeaders, "tamper-headers", false, "Inject WAF bypass headers (X-Originating-IP, X-Forwarded-Host, X-Custom-IP-Authorization, ...)")
+	flag.BoolVar(&chunkedBody, "chunked", false, "Send request bodies with Transfer-Encoding: chunked")
+	flag.BoolVar(&adaptive, "adaptive", false, "Adaptive WAF throttling: 429/403 backoff, dynamic threads, jitter, UA rotation")
+	flag.IntVar(&jitterMs, "jitter", 0, "Random delay between adaptive fuzz requests in ms (default: 0)")
+	flag.BoolVar(&rotateUA, "rotate-ua", false, "Rotate realistic browser User-Agent fingerprints (adaptive mode)")
+	flag.IntVar(&adaptiveMin, "adaptive-min", 1, "Minimum concurrency floor for adaptive throttling (default: 1)")
 	flag.BoolVar(&insecure, "k", true, "Disable TLS certificate verification (default: true for labs)")
 	flag.IntVar(&timeoutSec, "timeout", 15, "Request timeout in seconds (default: 15)")
 
 	// Reporting
 	flag.StringVar(&output, "o", "lab_report", "Output report base name")
+	flag.StringVar(&reportHTML, "report-html", "", "Write interactive offline HTML dashboard to this path")
+	flag.StringVar(&reportSARIF, "report-sarif", "", "Write SARIF v2.1.0 report to this path (GitHub / GitLab / DefectDojo)")
+	flag.StringVar(&reportJSON, "report-json", "", "Write structured JSON report to this path")
 
 	// Fast Fuzzing & Subdomain Discovery (ffuf-compatible)
 	flag.StringVar(&wordlist, "w", "", "Wordlist file path for high-speed fuzzing / subdomain discovery")
@@ -145,6 +208,9 @@ func main() {
 	flag.StringVar(&filterWordsRaw, "fw", "", "Filter response word counts (comma-separated)")
 	flag.StringVar(&matchLinesRaw, "ml", "", "Match response line counts (comma-separated)")
 	flag.StringVar(&filterLinesRaw, "fl", "", "Filter response line counts (comma-separated)")
+	flag.StringVar(&matchRegexStr, "mr", "", "Match response body regular expression (e.g. -mr 'admin|dashboard')")
+	flag.StringVar(&filterRegexStr, "fr", "", "Filter response body regular expression (e.g. -fr 'error|not found')")
+	flag.BoolVar(&autoRegex, "auto-regex", false, "Automatically infer differential regex filter from baseline response")
 
 	// Diagnostics & Version
 	flag.BoolVar(&isDoctor, "doctor", false, "Run diagnostic checks and troubleshooting")
@@ -184,6 +250,8 @@ ASSESSMENT, OSINT & RECON:
   -depth int       Crawler recursion depth (default: 3)
   -max-urls int    Max URLs to discover during spidering (default: 50)
   -shodan          Run Shodan OSINT reconnaissance (subdomains, ports, CVEs)
+  -osint           Comprehensive passive OSINT (crt.sh, DNS, SPF/DMARC, Wayback Archive)
+  -mine-params     Run automated hidden parameter miner (reflection/diff analysis)
   -shodan-key str  Shodan API Key (optional, defaults to built-in key)
   -m string        Modules to run: sqli, ssti, lfi, cmdi, xss, cors, redirect, ssrf, jwt, waf (default: "all")
 
@@ -196,6 +264,8 @@ HIGH-SPEED FUZZING & VHOSTS (ffuf-style):
   -ms, -fs string  Match / Filter response sizes in bytes
   -mw, -fw string  Match / Filter response word counts
   -ml, -fl string  Match / Filter response line counts
+  -mr, -fr regex   Match / Filter response body regular expression (e.g. -mr 'admin|success')
+  -auto-regex      Infer & apply differential regex filter automatically from baseline canary
 
 INTERACTIVE & DIAGNOSTICS:
   -i, -ui, -tui    Launch interactive mouse-controllable TUI dashboard
@@ -210,7 +280,31 @@ HTTP & PROXY CONFIGURATION:
   -p string        Proxy URL (e.g. http://127.0.0.1:8080)
   -k               Insecure / Ignore TLS verification (default: true)
   -timeout int     Request timeout in seconds (default: 15)
-  -o string        Output report filename prefix (default: "lab_report")`)
+  -rate int        Max requests per second (rate limit, default: 0 unlimited)
+  -retry int       Retry attempts on 429/503 status (default: 0)
+  -retry-delay ms  Base retry backoff delay in ms (default: 500)
+  -http2           Enable HTTP/2 support (default: true)
+  -raw             Use raw TCP/TLS socket HTTP mode
+  -tamper-headers  Inject WAF bypass headers (X-Originating-IP, X-Forwarded-Host, ...)
+  -chunked         Send request bodies with Transfer-Encoding: chunked
+  -adaptive        Adaptive WAF throttling (429/403 backoff, jitter, UA rotation)
+  -jitter ms       Random delay between adaptive requests (default: 0)
+  -rotate-ua       Rotate realistic browser User-Agent fingerprints
+  -adaptive-min n  Minimum concurrency floor for adaptive throttling (default: 1)
+  -o string        Output report filename prefix (default: "lab_report")
+  -report-html p   Write interactive offline HTML dashboard to path p
+  -report-sarif p  Write SARIF v2.1.0 report to path p (GitHub/GitLab/DefectDojo)
+  -report-json p   Write structured JSON report to path p
+
+ADVANCED EXPLOITATION & EXPANSION:
+  -scan            Enable fast TCP port scanning mode
+  -scan-ports str  Port range or profile: 'top100', '1-1024', or '80,443' (default: 'top100')
+  -scan-cve        Enrich open ports with live NIST NVD CVE lookup
+  -race            Run nanosecond-synchronized race condition & limit bypass attack
+  -race-threads n  Concurrent burst requests for race attack (default: 20)
+  -race-rounds n   Number of burst rounds to execute (default: 2)
+  -templates path  Path to Nuclei YAML template file or directory to execute
+  -template-tags s Filter Nuclei templates by tag (e.g. 'cve,misconfig')`)
 	}
 
 	flag.Parse()
@@ -230,7 +324,7 @@ HTTP & PROXY CONFIGURATION:
 	}
 
 	// If no arguments or target given, show standard usage
-	if len(os.Args) == 1 || (rawURL == "" && rawReqFile == "" && domain == "" && !isDoctor) {
+	if len(os.Args) == 1 || (rawURL == "" && rawReqFile == "" && domain == "" && !isDoctor && !isScan && !isOSINT) {
 		flag.Usage()
 		return
 	}
@@ -339,7 +433,11 @@ HTTP & PROXY CONFIGURATION:
 	}
 
 	// 5. Validation Check
-	if rawURL == "" {
+	if rawURL == "" && domain != "" {
+		rawURL = domain
+	}
+
+	if rawURL == "" && !isScan && !isOSINT {
 		fmt.Println("\033[1;36mNightfallLX (Go Edition)\033[0m - High-Performance Web Assessment & Fuzzer")
 		fmt.Println("Usage:")
 		fmt.Println("  nightfalllx -i                                               # Launch interactive Mouse-controlled Dashboard")
@@ -389,6 +487,49 @@ HTTP & PROXY CONFIGURATION:
 		}
 		sm := sp.Crawl()
 		sitemap.PrintSiteMap(sm)
+
+		schemaClient := client.NewClient(proxy, time.Duration(timeoutSec)*time.Second, insecure, cookie, parsedHeaders)
+		if schemas, err := parser.DetectAndParseAPISchemas(rawURL, schemaClient); err == nil && len(schemas) > 0 {
+			fmt.Printf("\033[1;32m[+] Discovered %d API Routes from OpenAPI/GraphQL Schemas:\033[0m\n", len(schemas))
+			for _, ep := range schemas {
+				fmt.Printf("    ├── [%s] %-30s (%s)\n", ep.Method, ep.Path, ep.Summary)
+			}
+			fmt.Println()
+		}
+		return
+	}
+
+	// 6d. Standalone Hidden Parameter Miner
+	if isMineParams {
+		fmt.Printf("\n\033[1;35m[*] Launching Hidden Parameter Miner on: %s (%s)\033[0m\n", rawURL, method)
+		miner := parser.NewParamMiner(&parser.MinerConfig{
+			URL:       rawURL,
+			Method:    method,
+			Proxy:     proxy,
+			Timeout:   time.Duration(timeoutSec) * time.Second,
+			Insecure:  insecure,
+			Cookie:    cookie,
+			Headers:   parsedHeaders,
+			BatchSize: 25,
+		})
+		discovered, err := miner.Mine()
+		if err != nil {
+			fmt.Printf("\033[31m[!] Parameter mining failed: %v\033[0m\n", err)
+			os.Exit(1)
+		}
+		if len(discovered) == 0 {
+			fmt.Println("\033[33m[-] No hidden parameters identified from wordlist.\033[0m")
+		} else {
+			fmt.Printf("\n\033[1;32m[+] Discovered %d Hidden Parameter(s):\033[0m\n", len(discovered))
+			for _, dp := range discovered {
+				fmt.Printf("    ├── \033[1;36m%-16s\033[0m [%s] Reason: %s (Status: %d, Diff: %+d bytes)\n",
+					dp.Name, dp.Location, dp.Reason, dp.StatusCode, dp.LengthDiff)
+				if dp.Evidence != "" {
+					fmt.Printf("    │   └── Evidence: %s\n", dp.Evidence)
+				}
+			}
+			fmt.Println()
+		}
 		return
 	}
 
@@ -416,6 +557,181 @@ HTTP & PROXY CONFIGURATION:
 		return
 	}
 
+	// 6c-2. Standalone Passive OSINT Intelligence Engine
+	if isOSINT {
+		targetDomain := domain
+		if targetDomain == "" {
+			if u, err := url.Parse(rawURL); err == nil && u.Hostname() != "" {
+				targetDomain = u.Hostname()
+			} else {
+				targetDomain = rawURL
+			}
+		}
+		targetDomain = strings.TrimPrefix(targetDomain, "http://")
+		targetDomain = strings.TrimPrefix(targetDomain, "https://")
+		if idx := strings.Index(targetDomain, "/"); idx != -1 {
+			targetDomain = targetDomain[:idx]
+		}
+		if idx := strings.Index(targetDomain, ":"); idx != -1 {
+			targetDomain = targetDomain[:idx]
+		}
+
+		fmt.Printf("\n\033[1;35m[*] Launching Passive OSINT Reconnaissance on:\033[0m %s ...\n", targetDomain)
+		rep, err := osint.RunOSINT(osint.Config{
+			Domain:        targetDomain,
+			Timeout:       time.Duration(timeoutSec) * time.Second,
+			FetchArchive:  true,
+			CheckTakeover: true,
+		})
+		if err != nil {
+			fmt.Printf("\033[31m[!] OSINT failed: %v\033[0m\n", err)
+			os.Exit(1)
+		}
+		osint.PrintOSINTReport(rep)
+		return
+	}
+
+	// 6e. Standalone Port Scanning Mode
+	if isScan {
+		targetHost := domain
+		if targetHost == "" {
+			if u, err := url.Parse(rawURL); err == nil && u.Hostname() != "" {
+				targetHost = u.Hostname()
+			} else {
+				targetHost = rawURL
+			}
+		}
+		targetHost = strings.TrimPrefix(targetHost, "http://")
+		targetHost = strings.TrimPrefix(targetHost, "https://")
+		if idx := strings.Index(targetHost, "/"); idx != -1 {
+			targetHost = targetHost[:idx]
+		}
+		if idx := strings.Index(targetHost, ":"); idx != -1 {
+			targetHost = targetHost[:idx]
+		}
+
+		fmt.Printf("\n\033[1;36m[*] Launching High-Speed Port Scanner on:\033[0m %s (Profile: %s)\n", targetHost, scanPorts)
+		scanner := portscan.NewScanner(targetHost)
+		scanner.FetchCVEs = scanCVE
+
+		var results []portscan.PortResult
+		var scanErr error
+		if scanPorts == "top100" || scanPorts == "" {
+			results, scanErr = scanner.ScanCommon()
+		} else if strings.Contains(scanPorts, "-") {
+			parts := strings.Split(scanPorts, "-")
+			start, _ := strconv.Atoi(strings.TrimSpace(parts[0]))
+			end, _ := strconv.Atoi(strings.TrimSpace(parts[1]))
+			results, scanErr = scanner.ScanRange(start, end)
+		} else if strings.Contains(scanPorts, ",") {
+			var customPorts []int
+			for _, pStr := range strings.Split(scanPorts, ",") {
+				if p, err := strconv.Atoi(strings.TrimSpace(pStr)); err == nil && p > 0 && p <= 65535 {
+					customPorts = append(customPorts, p)
+				}
+			}
+			results, scanErr = scanner.ScanPorts(customPorts)
+		} else if p, err := strconv.Atoi(strings.TrimSpace(scanPorts)); err == nil && p > 0 && p <= 65535 {
+			results, scanErr = scanner.ScanPorts([]int{p})
+		} else {
+			results, scanErr = scanner.ScanCommon()
+		}
+
+		if scanErr != nil {
+			fmt.Printf("\033[31m[!] Port scan failed: %v\033[0m\n", scanErr)
+			os.Exit(1)
+		}
+
+		fmt.Printf("\n\033[1;32m[+] Open Ports Discovered (%d total):\033[0m\n", len(results))
+		fmt.Printf("    %-8s %-16s %-30s %s\n", "PORT", "SERVICE", "VERSION/BANNER", "CVE DETAILS")
+		fmt.Printf("    %s\n", strings.Repeat("-", 75))
+		for _, r := range results {
+			bannerText := r.Version
+			if bannerText == "" {
+				bannerText = r.Banner
+			}
+			if len(bannerText) > 28 {
+				bannerText = bannerText[:28] + "..."
+			}
+			cveStr := ""
+			if len(r.CVEs) > 0 {
+				cveStr = fmt.Sprintf("[%s (CVSS %.1f)]", r.CVEs[0].ID, r.CVEs[0].CVSS)
+			}
+			fmt.Printf("    %-8s %-16s %-30s %s\n", fmt.Sprintf("%d/tcp", r.Port), r.Service, bannerText, cveStr)
+		}
+		fmt.Println()
+		return
+	}
+
+	// 6f. Standalone Race Condition Testing Mode
+	if isRace {
+		fmt.Printf("\n\033[1;31m[*] Launching Race Condition Attack (Burst Threads: %d, Rounds: %d) on: %s\033[0m\n", raceThreads, raceRounds, rawURL)
+		raceCfg := race.RaceConfig{
+			URL:      rawURL,
+			Method:   method,
+			Body:     data,
+			Headers:  parsedHeaders,
+			Threads:  raceThreads,
+			Rounds:   raceRounds,
+			Insecure: insecure,
+		}
+		rep, err := race.Run(raceCfg)
+		if err != nil {
+			fmt.Printf("\033[31m[!] Race attack failed: %v\033[0m\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("\n\033[1;36m[+] Race Attack Results:\033[0m Total Dispatched: %d\n", rep.TotalRequests)
+		fmt.Printf("    ├── Status Distributions: %v\n", rep.UniqueStatuses)
+		fmt.Printf("    ├── Unique Body Variants: %d\n", len(rep.UniqueBodyHashes))
+		if rep.AnomalyDetected {
+			fmt.Printf("    └── \033[1;31m[VULNERABLE] Race Condition Confirmed!\033[0m %s\n", rep.AnomalyReason)
+		} else {
+			fmt.Printf("    └── \033[1;32m[SAFE]\033[0m Endpoints responded deterministically. No concurrency anomaly.\n")
+		}
+		fmt.Println()
+		return
+	}
+
+	// 6g. Standalone Nuclei Template Execution Mode
+	if templatesPath != "" {
+		fmt.Printf("\n\033[1;35m[*] Loading Nuclei Templates from:\033[0m %s (Tag filter: '%s') ...\n", templatesPath, templateTags)
+		var tmpls []*nuclei_engine.NucleiTemplate
+		fi, err := os.Stat(templatesPath)
+		if err != nil {
+			fmt.Printf("\033[31m[!] Cannot access templates path: %v\033[0m\n", err)
+			os.Exit(1)
+		}
+		if fi.IsDir() {
+			tmpls, err = nuclei_engine.LoadTemplatesFromDir(templatesPath, templateTags)
+		} else {
+			var single *nuclei_engine.NucleiTemplate
+			single, err = nuclei_engine.LoadTemplateFromFile(templatesPath)
+			if err == nil && single != nil {
+				tmpls = []*nuclei_engine.NucleiTemplate{single}
+			}
+		}
+		if err != nil || len(tmpls) == 0 {
+			fmt.Printf("\033[33m[!] No matching templates found in %s\033[0m\n", templatesPath)
+			os.Exit(1)
+		}
+
+		fmt.Printf("\033[1;32m[+] Loaded %d template(s). Executing against %s ...\033[0m\n\n", len(tmpls), rawURL)
+		tClient := client.NewClient(proxy, time.Duration(timeoutSec)*time.Second, insecure, cookie, parsedHeaders)
+		executor := nuclei_engine.NewExecutor(tClient, tmpls)
+
+		matchedCount := 0
+		for _, tmpl := range tmpls {
+			res, err := executor.ExecuteTemplate(tmpl, rawURL)
+			if err == nil && res != nil && res.Matched {
+				matchedCount++
+				fmt.Printf("    \033[1;31m[MATCH]\033[0m [%-10s] \033[1m%s\033[0m at %s\n", res.Severity, res.TemplateName, res.MatchedAt)
+				fmt.Printf("            PoC: %s\n", res.CurlCommand)
+			}
+		}
+		fmt.Printf("\n\033[1mFinished Nuclei Scan:\033[0m %d templates matched out of %d executed.\n\n", matchedCount, len(tmpls))
+		return
+	}
+
 	// 7. Fast Fuzzer / Subdomain Mode Check
 	hasFuzzKeyword := strings.Contains(rawURL, "FUZZ") || strings.Contains(rawURL, "*") ||
 		strings.Contains(data, "FUZZ") || strings.Contains(data, "*")
@@ -428,24 +744,38 @@ HTTP & PROXY CONFIGURATION:
 
 	if isFuzz || hasFuzzKeyword || (wordlist != "" && len(parsedHeaders["Host"]) > 0 && strings.Contains(parsedHeaders["Host"], "FUZZ")) {
 		fuzzCfg := &fuzzer.Config{
-			URL:           rawURL,
-			WordlistPath:  wordlist,
-			Method:        strings.ToUpper(method),
-			Data:          data,
-			Headers:       parsedHeaders,
-			Threads:       threads,
-			Timeout:       time.Duration(timeoutSec) * time.Second,
-			Proxy:         proxy,
-			Insecure:      insecure,
-			AutoCalibrate: autoCalibrate,
-			IsSubdomain:   isSubdomain,
-			FilterCodes:   parseCodes(filterCodeRaw),
-			FilterSizes:   parseCodes(filterSizeRaw),
-			FilterWords:   parseCodes(filterWordsRaw),
-			FilterLines:   parseCodes(filterLinesRaw),
-			MatchSizes:    parseCodes(matchSizesRaw),
-			MatchWords:    parseCodes(matchWordsRaw),
-			MatchLines:    parseCodes(matchLinesRaw),
+			URL:                rawURL,
+			WordlistPath:       wordlist,
+			Method:             strings.ToUpper(method),
+			Data:               data,
+			Headers:            parsedHeaders,
+			Threads:            threads,
+			Timeout:            time.Duration(timeoutSec) * time.Second,
+			Proxy:              proxy,
+			Insecure:           insecure,
+			AutoCalibrate:      autoCalibrate,
+			IsSubdomain:        isSubdomain,
+			FilterCodes:        parseCodes(filterCodeRaw),
+			FilterSizes:        parseCodes(filterSizeRaw),
+			FilterWords:        parseCodes(filterWordsRaw),
+			FilterLines:        parseCodes(filterLinesRaw),
+			MatchSizes:         parseCodes(matchSizesRaw),
+			MatchWords:         parseCodes(matchWordsRaw),
+			MatchLines:         parseCodes(matchLinesRaw),
+			RateLimit:          rateLimit,
+			MaxRetries:         maxRetries,
+			RetryDelay:         time.Duration(retryDelayMs) * time.Millisecond,
+			HTTP2:              enableHTTP2,
+			RawHTTP:            rawHTTP,
+			HeaderTampering:    tamperHeaders,
+			Chunked:            chunkedBody,
+			Adaptive:           adaptive,
+			AdaptiveMinThreads: adaptiveMin,
+			AdaptiveJitter:     time.Duration(jitterMs) * time.Millisecond,
+			RotateUserAgent:    rotateUA,
+			MatchRegexStr:      matchRegexStr,
+			FilterRegexStr:     filterRegexStr,
+			AutoRegex:          autoRegex,
 		}
 		if matchCodesRaw != "" {
 			fuzzCfg.MatchCodes = parseCodes(matchCodesRaw)
@@ -513,6 +843,15 @@ HTTP & PROXY CONFIGURATION:
 	httpClient := client.NewClient(proxy, time.Duration(timeoutSec)*time.Second, insecure, cookie, parsedHeaders)
 	httpClient.ScopeHosts = scopeHosts
 	httpClient.ScopeOff = scopeOff
+	if rateLimit > 0 {
+		httpClient.SetRateLimit(rateLimit)
+	}
+	if maxRetries > 0 {
+		httpClient.SetRetry(maxRetries, time.Duration(retryDelayMs)*time.Millisecond)
+	}
+	httpClient.SetHTTP2(enableHTTP2)
+	httpClient.SetHeaderTampering(tamperHeaders)
+	httpClient.SetChunkedEncoding(chunkedBody)
 
 	// Step 1: Deep Technology & Version Fingerprint
 	det := detector.NewTechDetector()
@@ -554,14 +893,17 @@ HTTP & PROXY CONFIGURATION:
 		"exposure":   modules.NewExposureModule(),
 		"hostheader": modules.NewHostHeaderModule(),
 		"crlf":       modules.NewCRLFModule(),
+		"secrets":    secrets.NewModule(),
+		"race":       race.NewModule(),
+		"userenum":   modules.NewUserEnumModule(),
 	}
 
 	var activeModules []modules.Module
 	if moduleList == "all" {
 		order := []string{
-			"waf", "headers", "exposure", "sqli", "ssti", "lfi", "cmdi",
+			"waf", "headers", "exposure", "secrets", "sqli", "ssti", "lfi", "cmdi",
 			"xss", "cors", "redirect", "ssrf", "jwt", "idor", "csrf",
-			"xxe", "nosqli", "upload", "hostheader", "crlf",
+			"xxe", "nosqli", "upload", "hostheader", "crlf", "race", "userenum",
 		}
 		for _, name := range order {
 			activeModules = append(activeModules, availableModules[name])
@@ -576,6 +918,7 @@ HTTP & PROXY CONFIGURATION:
 	}
 
 	var allFindings []*modules.Finding
+	scanStart := time.Now()
 	for _, mod := range activeModules {
 		fmt.Printf("\033[36m[*] Running module: \033[1m%-10s\033[0m (%s) ...\n", mod.Name(), mod.Description())
 		findings, err := mod.Run(target, httpClient)
@@ -593,13 +936,46 @@ HTTP & PROXY CONFIGURATION:
 		allFindings = append(allFindings, findings...)
 	}
 
+	meta := reporters.ReportMeta{
+		Timestamp: time.Now().UTC(),
+		Duration:  time.Since(scanStart),
+		Version:   "2.0.0",
+		Command:   strings.Join(os.Args, " "),
+	}
+
 	mdFile := output + ".md"
 	jsonFile := output + ".json"
-	reporters.WriteMarkdownReport(target, allFindings, mdFile)
-	reporters.WriteJSONReport(target, allFindings, jsonFile)
+	if reportJSON != "" {
+		jsonFile = reportJSON
+	}
+	htmlFile := output + ".html"
+	if reportHTML != "" {
+		htmlFile = reportHTML
+	}
+
+	_ = reporters.WriteMarkdownReport(target, allFindings, mdFile)
+	if err := reporters.WriteJSONReport(target, allFindings, meta, jsonFile); err != nil {
+		fmt.Printf("\033[31m[!] JSON report error: %v\033[0m\n", err)
+	}
+	if err := reporters.WriteHTMLReport(target, allFindings, meta, htmlFile); err != nil {
+		fmt.Printf("\033[31m[!] HTML report error: %v\033[0m\n", err)
+	}
+
+	saved := []string{
+		fmt.Sprintf("  Markdown: \033[32m%s\033[0m", mdFile),
+		fmt.Sprintf("  JSON:     \033[32m%s\033[0m", jsonFile),
+		fmt.Sprintf("  HTML:     \033[32m%s\033[0m", htmlFile),
+	}
+	if reportSARIF != "" {
+		if err := reporters.WriteSARIFReport(target, allFindings, meta, reportSARIF); err != nil {
+			fmt.Printf("\033[31m[!] SARIF report error: %v\033[0m\n", err)
+		} else {
+			saved = append(saved, fmt.Sprintf("  SARIF:    \033[32m%s\033[0m", reportSARIF))
+		}
+	}
 
 	fmt.Println("\n" + strings.Repeat("=", 60))
 	fmt.Printf("\033[1mScan Finished!\033[0m Confirmed Vulnerabilities: \033[1;32m%d\033[0m\n", len(allFindings))
-	fmt.Printf("Reports saved to:\n  Markdown: \033[32m%s\033[0m\n  JSON:     \033[32m%s\033[0m\n", mdFile, jsonFile)
+	fmt.Printf("Reports saved to:\n%s\n", strings.Join(saved, "\n"))
 	fmt.Println(strings.Repeat("=", 60))
 }

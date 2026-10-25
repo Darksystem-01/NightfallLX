@@ -2,8 +2,8 @@ package modules
 
 import (
 	"math"
-	"nightfalllx/pkg/client"
 	"net/url"
+	"nightfalllx/pkg/client"
 	"strings"
 )
 
@@ -30,6 +30,9 @@ type Finding struct {
 	Evidence    string   `json:"evidence"`
 	Remediation string   `json:"remediation"`
 	CWEID       int      `json:"cwe_id"`
+	CVSS        float64  `json:"cvss,omitempty"`
+	RawRequest  string   `json:"raw_request,omitempty"`
+	RawResponse string   `json:"raw_response,omitempty"`
 }
 
 // Target holds target URL parameters and metadata.

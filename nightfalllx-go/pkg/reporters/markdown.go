@@ -1,7 +1,6 @@
 package reporters
 
 import (
-	"encoding/json"
 	"fmt"
 	"net/url"
 	"nightfalllx/pkg/modules"
@@ -67,29 +66,7 @@ func escapeMarkdownPipe(s string) string {
 	return strings.ReplaceAll(s, "|", "\\|")
 }
 
-// WriteJSONReport writes findings to a JSON file.
-func WriteJSONReport(target *modules.Target, findings []*modules.Finding, filePath string) error {
-	if findings == nil {
-		findings = []*modules.Finding{}
-	}
-	data := map[string]interface{}{
-		"target": map[string]interface{}{
-			"url":        target.URL,
-			"method":     target.Method,
-			"parameters": target.Parameters(),
-		},
-		"scan_date":      time.Now().UTC().Format(time.RFC3339),
-		"total_findings": len(findings),
-		"findings":       findings,
-	}
-
-	bytes, err := json.MarshalIndent(data, "", "  ")
-	if err != nil {
-		return err
-	}
-
-	return os.WriteFile(filePath, bytes, 0644)
-}
+// WriteJSONReport lives in json.go and emits the structured report model.
 
 func buildCurl(target *modules.Target, param, payload string) string {
 	if target.Method == "POST" {
