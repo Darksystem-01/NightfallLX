@@ -1,38 +1,68 @@
 #!/usr/bin/env bash
-# NightfallLX Universal Installer
+# NightfallLX Universal Installer for Linux, macOS and WSL
 set -e
 
-echo -e "\033[1;36m:: NightfallLX Universal Installer ::\033[0m"
+echo -e "\033[1;36m"
+echo "  ███╗   ██╗██╗ ██████╗ ██╗  ██╗████████╗███████╗ █████╗ ██╗     ██╗     ██╗   ██╗"
+echo "  ████╗  ██║██║██╔════╝ ██║  ██║╚══██╔══╝██╔════╝██╔══██╗██║     ██║     ╚██╗ ██╔╝"
+echo "  ██╔██╗ ██║██║██║  ███╗███████║   ██║   █████╗  ███████║██║     ██║      ╚████╔╝ "
+echo "  ██║╚██╗██║██║██║   ██║██╔══██║   ██║   ██╔══╝  ██╔══██║██║     ██║      ██╔═██╗ "
+echo "  ██║ ╚████║██║╚██████╔╝██║  ██║   ██║   ██║     ██║  ██║███████╗███████╗██╔╝ ██╗"
+echo "  ╚═╝  ╚═══╝╚═╝ ╚═════╝ ╚═╝  ╚═╝   ╚═╝   ╚═╝     ╚═╝  ╚═╝╚══════╝╚══════╝╚═╝  ╚═╝"
+echo "  :: Next-Gen Web Assessment & Recon Suite :: [ Pure Go v2.0 ] ::"
+echo -e "\033[0m"
 
-# 1. Determine target binary directory
-TARGET_DIR="/usr/local/bin"
-if [ ! -w "$TARGET_DIR" ] && [ "$EUID" -ne 0 ]; then
-    TARGET_DIR="$HOME/.local/bin"
+# 1. Check Go
+if ! command -v go >/dev/null 2>&1; then
+    echo -e "\033[31m[!] Error: Go compiler (golang) is not installed.\033[0m"
+    echo "    Please install Go 1.21+ from https://go.dev/dl/ and run this script again."
+    exit 1
 fi
-mkdir -p "$TARGET_DIR"
 
-# 2. Prefer High-Performance Go Edition
-if command -v go >/dev/null 2>&1; then
-    echo "[*] Building ultra-fast Go binary..."
-    if [ -d "nightfalllx-go" ]; then
-        cd nightfalllx-go
+echo -e "\033[34m[*] Compiling NightfallLX binary from source with optimizations...\033[0m"
+go build -ldflags="-s -w" -o nightfalllx main.go
+
+# 2. Determine best destination directory in PATH
+TARGET_DIR="/usr/local/bin"
+USE_SUDO=""
+
+if [ "$EUID" -ne 0 ]; then
+    if [ -w "/usr/local/bin" ]; then
+        TARGET_DIR="/usr/local/bin"
+    elif command -v sudo >/dev/null 2>&1; then
+        USE_SUDO="sudo"
+        TARGET_DIR="/usr/local/bin"
+    else
+        TARGET_DIR="$HOME/.local/bin"
+        mkdir -p "$TARGET_DIR"
     fi
-    go build -ldflags="-s -w" -o nightfalllx main.go
+else
+    TARGET_DIR="/usr/local/bin"
+fi
+
+echo -e "\033[34m[*] Installing binary to $TARGET_DIR/nightfalllx ...\033[0m"
+if [ -n "$USE_SUDO" ]; then
+    sudo cp nightfalllx "$TARGET_DIR/nightfalllx"
+    sudo chmod +x "$TARGET_DIR/nightfalllx"
+else
     cp nightfalllx "$TARGET_DIR/nightfalllx"
     chmod +x "$TARGET_DIR/nightfalllx"
-    echo -e "\033[1;32m[✓] NightfallLX (Go Edition) successfully installed to: $TARGET_DIR/nightfalllx\033[0m"
-    echo -e "You can now run \033[1;33mnightfalllx --version\033[0m or \033[1;33mnightfalllx -i\033[0m from any directory!"
-    exit 0
 fi
 
-# 3. Fallback to Python Edition
-if command -v python3 >/dev/null 2>&1; then
-    echo "[*] Go compiler not detected. Installing Python edition..."
-    python3 -m pip install -e .
-    echo -e "\033[1;32m[✓] NightfallLX (Python Edition) installed successfully.\033[0m"
-    echo -e "You can now run \033[1;33mnightfalllx --version\033[0m from any directory!"
-    exit 0
+# Ensure TARGET_DIR is in user's PATH if installed to ~/.local/bin
+if [ "$TARGET_DIR" = "$HOME/.local/bin" ]; then
+    case ":$PATH:" in
+        *":$HOME/.local/bin:"*) ;;
+        *)
+            echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$HOME/.bashrc" 2>/dev/null || true
+            echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$HOME/.zshrc" 2>/dev/null || true
+            export PATH="$HOME/.local/bin:$PATH"
+            ;;
+    esac
 fi
 
-echo -e "\033[31m[!] Error: Neither Go compiler nor Python3 found on system.\033[0m"
-exit 1
+echo ""
+echo -e "\033[1;32m[✓] NightfallLX successfully installed globally to: $TARGET_DIR/nightfalllx\033[0m"
+echo -e "\033[1;33mYou can now run 'nightfalllx' from any directory in your terminal!\033[0m"
+echo ""
+nightfalllx --version 2>/dev/null || "$TARGET_DIR/nightfalllx" --version

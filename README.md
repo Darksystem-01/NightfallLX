@@ -53,21 +53,32 @@ NightfallLX is an evidence-first, multi-threaded offensive and defensive securit
 
 ---
 
-## 🚀 Quick Installation
+## 🚀 Global One-Command Installation
 
-### Build from Source (Go 1.21+)
+NightfallLX compiles into a single, dependency-free binary that can be run globally from any terminal.
 
+### 🐧 Linux / macOS / WSL (Auto-Installer)
 ```bash
 git clone https://github.com/Darksystem-01/NightfallLX.git
-cd NightfallLX/nightfalllx-go
-go build -ldflags="-s -w" -o nightfalllx.exe .
+cd NightfallLX
+chmod +x install.sh
+./install.sh
 ```
 
-On Linux/macOS:
+### 🪟 Windows (PowerShell Auto-Installer)
+Open PowerShell and run:
+```powershell
+git clone https://github.com/Darksystem-01/NightfallLX.git
+cd NightfallLX
+.\install.ps1
+```
+*(Or double-click `install.bat`)*
+
+### ⚡ Manual Compilation (Go 1.21+)
 ```bash
+git clone https://github.com/Darksystem-01/NightfallLX.git
+cd NightfallLX
 go build -ldflags="-s -w" -o nightfalllx .
-chmod +x nightfalllx
-sudo mv nightfalllx /usr/local/bin/
 ```
 
 ---

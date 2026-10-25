@@ -3,14 +3,16 @@
 all: build
 
 build:
-	cd nightfalllx-go && go build -ldflags="-s -w" -o nightfalllx main.go
+	go build -ldflags="-s -w" -o nightfalllx main.go
 
 install: build
-	mkdir -p $(HOME)/.local/bin
-	cp nightfalllx-go/nightfalllx $(HOME)/.local/bin/nightfalllx
-	chmod +x $(HOME)/.local/bin/nightfalllx
-	@echo "NightfallLX successfully installed to $(HOME)/.local/bin/nightfalllx"
+	@mkdir -p $(DESTDIR)/usr/local/bin 2>/dev/null || mkdir -p $(HOME)/.local/bin
+	@cp nightfalllx /usr/local/bin/nightfalllx 2>/dev/null || cp nightfalllx $(HOME)/.local/bin/nightfalllx
+	@chmod +x /usr/local/bin/nightfalllx 2>/dev/null || chmod +x $(HOME)/.local/bin/nightfalllx
+	@echo "[✓] NightfallLX successfully installed! Run 'nightfalllx --help'"
 
 test:
-	cd nightfalllx-go && go test -v ./...
-	PYTHONPATH=. pytest
+	go test -v -count=1 ./...
+
+clean:
+	rm -f nightfalllx nightfalllx.exe
