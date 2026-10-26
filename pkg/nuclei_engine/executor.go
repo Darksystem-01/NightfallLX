@@ -6,6 +6,7 @@ import (
 	"nightfalllx/pkg/client"
 	"nightfalllx/pkg/modules"
 	"strings"
+	"sync"
 )
 
 // TemplateResult models findings from a template execution.
@@ -158,4 +159,47 @@ func (tr *TemplateResult) ToFinding() *modules.Finding {
 		CWEID:       200,
 		CVSS:        7.0,
 	}
+}
+
+// ExecuteParallel runs templates concurrently using a worker pool.
+func (e *Executor) ExecuteParallel(tmpls []*NucleiTemplate, targetURL string, concurrency int, onMatch func(*TemplateResult)) []*TemplateResult {
+	if concurrency <= 0 {
+		concurrency = 20
+	}
+	if concurrency > len(tmpls) {
+		concurrency = len(tmpls)
+	}
+
+	jobs := make(chan *NucleiTemplate, len(tmpls))
+	for _, t := range tmpls {
+		jobs <- t
+	}
+	close(jobs)
+
+	var (
+		mu      sync.Mutex
+		results []*TemplateResult
+		wg      sync.WaitGroup
+	)
+
+	for i := 0; i < concurrency; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for tmpl := range jobs {
+				res, err := e.ExecuteTemplate(tmpl, targetURL)
+				if err == nil && res != nil && res.Matched {
+					mu.Lock()
+					results = append(results, res)
+					mu.Unlock()
+					if onMatch != nil {
+						onMatch(res)
+					}
+				}
+			}
+		}()
+	}
+
+	wg.Wait()
+	return results
 }

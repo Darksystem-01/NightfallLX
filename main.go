@@ -113,8 +113,12 @@ func main() {
 		isRace         bool
 		raceThreads    int
 		raceRounds     int
+		isNuclei       bool
 		templatesPath  string
 		templateTags   string
+		nucleiSeverity string
+		nucleiC        int
+		nucleiEngine   string
 		matchRegexStr  string
 		filterRegexStr string
 		autoRegex      bool
@@ -178,8 +182,14 @@ func main() {
 	flag.IntVar(&raceRounds, "race-rounds", 2, "Number of burst rounds to execute (default: 2)")
 
 	// Nuclei Template DSL Engine
-	flag.StringVar(&templatesPath, "templates", "", "Path to Nuclei YAML template file or directory to execute")
+	flag.BoolVar(&isNuclei, "nuclei", false, "Execute high-speed concurrent Nuclei vulnerability engine")
+	flag.StringVar(&templatesPath, "templates", "", "Path to Nuclei YAML template file or directory to execute (auto-discovered if omitted)")
 	flag.StringVar(&templateTags, "template-tags", "", "Comma-separated tag filter for Nuclei templates (e.g. 'cve,misconfig')")
+	flag.StringVar(&templateTags, "tags", "", "Alias for -template-tags")
+	flag.StringVar(&nucleiSeverity, "sev", "", "Filter Nuclei templates by severity: 'critical,high,medium,low,info'")
+	flag.StringVar(&nucleiSeverity, "severity", "", "Alias for -sev")
+	flag.IntVar(&nucleiC, "nuclei-c", 35, "Concurrency for Nuclei execution (default: 35)")
+	flag.StringVar(&nucleiEngine, "nuclei-engine", "auto", "Nuclei engine mode: 'auto' (preferred), 'official', or 'internal'")
 
 	// HTTP Options
 	flag.StringVar(&method, "X", "GET", "HTTP Method: GET, POST, PUT, etc.")
@@ -321,8 +331,12 @@ ADVANCED EXPLOITATION & EXPANSION:
   -race            Run nanosecond-synchronized race condition & limit bypass attack
   -race-threads n  Concurrent burst requests for race attack (default: 20)
   -race-rounds n   Number of burst rounds to execute (default: 2)
-  -templates path  Path to Nuclei YAML template file or directory to execute
-  -template-tags s Filter Nuclei templates by tag (e.g. 'cve,misconfig')`)
+  -nuclei          Execute high-speed concurrent Nuclei vulnerability engine
+  -templates path  Path to Nuclei YAML template file or directory (auto-discovered)
+  -tags s          Filter Nuclei templates by tag (e.g. 'cve,misconfig,exposure')
+  -sev s           Filter Nuclei templates by severity (e.g. 'critical,high,medium')
+  -nuclei-c n      Concurrency for Nuclei execution (default: 35)
+  -nuclei-engine s Engine mode: 'auto' (preferred), 'official', or 'internal' (default: 'auto')`)
 	}
 
 	flag.Parse()
@@ -455,7 +469,7 @@ ADVANCED EXPLOITATION & EXPANSION:
 		rawURL = domain
 	}
 
-	if rawURL == "" && !isScan && !isOSINT && !isDorks {
+	if rawURL == "" && !isScan && !isOSINT && !isDorks && !isNuclei {
 		fmt.Println("\033[1;36mNightfallLX (Go Edition)\033[0m - High-Performance Web Assessment & Fuzzer")
 		fmt.Println("Usage:")
 		fmt.Println("  nightfalllx -i                                               # Launch interactive Mouse-controlled Dashboard")
@@ -463,6 +477,8 @@ ADVANCED EXPLOITATION & EXPANSION:
 		fmt.Println("  nightfalllx -r request.txt                                   # Scan Burp Suite request")
 		fmt.Println("  nightfalllx -sub -u http://10.129.x.x -domain target.htb     # ffuf-style VHost/Subdomain finder")
 		fmt.Println("  nightfalllx -u http://10.129.x.x/FUZZ -w wordlist.txt -t 50  # Directory/Param fuzzer")
+		fmt.Println("  nightfalllx -u http://target.lab -nuclei                     # High-speed auto-discovered Nuclei scan")
+		fmt.Println("  nightfalllx -u http://target.lab -nuclei -tags cve,misconfig # Tagged CVE & misconfig scan")
 		fmt.Println("  nightfalllx -u http://target.lab/?id=1 -m all -p http://127.0.0.1:8080")
 		fmt.Println("  nightfalllx --doctor -u http://target.lab/ -p http://127.0.0.1:8080")
 		fmt.Println()
@@ -840,44 +856,96 @@ ADVANCED EXPLOITATION & EXPANSION:
 		return
 	}
 
-	// 6g. Standalone Nuclei Template Execution Mode
-	if templatesPath != "" {
-		fmt.Printf("\n\033[1;35m[*] Loading Nuclei Templates from:\033[0m %s (Tag filter: '%s') ...\n", templatesPath, templateTags)
-		var tmpls []*nuclei_engine.NucleiTemplate
-		fi, err := os.Stat(templatesPath)
-		if err != nil {
-			fmt.Printf("\033[31m[!] Cannot access templates path: %v\033[0m\n", err)
-			os.Exit(1)
-		}
-		if fi.IsDir() {
-			tmpls, err = nuclei_engine.LoadTemplatesFromDir(templatesPath, templateTags)
+	// 6g. High-Speed Concurrent Nuclei Vulnerability & Misconfiguration Execution Engine
+	if isNuclei || templatesPath != "" {
+		fmt.Println("\n\033[1;36m┌──────────────────────────────────────────────────────────────────────────────────┐\033[0m")
+		fmt.Println("\033[1;36m│\033[0m \033[1;37m⚡ NightfallLX High-Speed Nuclei Vulnerability & Misconfig Engine\033[0m               \033[1;36m│\033[0m")
+		fmt.Printf("\033[1;36m│\033[0m Target:      \033[1;33m%-67s\033[0m \033[1;36m│\033[0m\n", rawURL)
+		if templatesPath != "" {
+			fmt.Printf("\033[1;36m│\033[0m Templates:   \033[1;32m%-67s\033[0m \033[1;36m│\033[0m\n", templatesPath)
 		} else {
-			var single *nuclei_engine.NucleiTemplate
-			single, err = nuclei_engine.LoadTemplateFromFile(templatesPath)
-			if err == nil && single != nil {
-				tmpls = []*nuclei_engine.NucleiTemplate{single}
+			fmt.Printf("\033[1;36m│\033[0m Templates:   \033[1;32m%-67s\033[0m \033[1;36m│\033[0m\n", "Auto-Discover (Full Official Suite)")
+		}
+		if templateTags != "" {
+			fmt.Printf("\033[1;36m│\033[0m Tags:        \033[1;35m%-67s\033[0m \033[1;36m│\033[0m\n", templateTags)
+		}
+		if nucleiSeverity != "" {
+			fmt.Printf("\033[1;36m│\033[0m Severity:    \033[1;31m%-67s\033[0m \033[1;36m│\033[0m\n", nucleiSeverity)
+		}
+		fmt.Println("\033[1;36m└──────────────────────────────────────────────────────────────────────────────────┘\033[0m")
+
+		effectiveTags := templateTags
+		if effectiveTags == "" {
+			// Quick non-invasive technology detection to prioritize relevant tags
+			detClient := client.NewClient(proxy, time.Duration(timeoutSec)*time.Second, insecure, cookie, parsedHeaders)
+			det := detector.NewTechDetector()
+			if rep, err := det.Detect(rawURL, detClient); err == nil && rep != nil && len(rep.Technologies) > 0 {
+				var techNames []string
+				for _, t := range rep.Technologies {
+					techNames = append(techNames, t.Name)
+				}
+				inferred := nuclei_engine.InferTagsFromTech(techNames)
+				if inferred != "" {
+					effectiveTags = inferred + ",misconfig,exposure"
+					fmt.Printf("\033[1;34m[*] Smart Technology Filtering:\033[0m Detected %s -> Prioritizing tags '%s'\n", strings.Join(techNames, ", "), effectiveTags)
+				}
 			}
 		}
-		if err != nil || len(tmpls) == 0 {
-			fmt.Printf("\033[33m[!] No matching templates found in %s\033[0m\n", templatesPath)
-			os.Exit(1)
-		}
 
-		fmt.Printf("\033[1;32m[+] Loaded %d template(s). Executing against %s ...\033[0m\n\n", len(tmpls), rawURL)
 		tClient := client.NewClient(proxy, time.Duration(timeoutSec)*time.Second, insecure, cookie, parsedHeaders)
-		executor := nuclei_engine.NewExecutor(tClient, tmpls)
-
-		matchedCount := 0
-		for _, tmpl := range tmpls {
-			res, err := executor.ExecuteTemplate(tmpl, rawURL)
-			if err == nil && res != nil && res.Matched {
-				matchedCount++
-				fmt.Printf("    \033[1;31m[MATCH]\033[0m [%-10s] \033[1m%s\033[0m at %s\n", res.Severity, res.TemplateName, res.MatchedAt)
-				fmt.Printf("            PoC: %s\n", res.CurlCommand)
-			}
+		nucleiCfg := nuclei_engine.NucleiRunnerConfig{
+			TargetURL:     rawURL,
+			TemplatesPath: templatesPath,
+			Tags:          effectiveTags,
+			Severity:      nucleiSeverity,
+			Concurrency:   nucleiC,
+			TimeoutSec:    timeoutSec,
+			Engine:        nucleiEngine,
+			Proxy:         proxy,
+			Headers:       parsedHeaders,
+			Client:        tClient,
 		}
-		fmt.Printf("\n\033[1mFinished Nuclei Scan:\033[0m %d templates matched out of %d executed.\n\n", matchedCount, len(tmpls))
-		return
+
+		nFindings, nErr := nuclei_engine.RunSmartNuclei(nucleiCfg)
+		if nErr != nil {
+			fmt.Printf("\033[31m[!] Nuclei execution error: %v\033[0m\n", nErr)
+		} else {
+			fmt.Printf("\n\033[1;32m[+] Nuclei Scan Finished:\033[0m \033[1m%d\033[0m vulnerability/misconfiguration findings matched.\n\n", len(nFindings))
+		}
+
+		// If user called standalone nuclei mode without standard web assessment, generate reports if requested and return
+		hasFuzz := strings.Contains(rawURL, "FUZZ") || strings.Contains(rawURL, "*") || strings.Contains(data, "FUZZ")
+		if !isScan && !isOSINT && !isDorks && !isAdmin && !isEmails && !is403Bypass && !isGraphQL && !isSiteMap && !isMineParams && !isRace && !hasFuzz {
+			if len(nFindings) > 0 && (reportJSON != "" || reportHTML != "" || reportSARIF != "" || output != "lab_report") {
+				meta := reporters.ReportMeta{
+					Timestamp: time.Now().UTC(),
+					Duration:  1 * time.Second,
+					Version:   "2.0.0",
+					Command:   strings.Join(os.Args, " "),
+				}
+				dummyTarget := &modules.Target{
+					URL:    rawURL,
+					Method: "GET",
+				}
+				mdFile := output + ".md"
+				jsonFile := output + ".json"
+				if reportJSON != "" {
+					jsonFile = reportJSON
+				}
+				htmlFile := output + ".html"
+				if reportHTML != "" {
+					htmlFile = reportHTML
+				}
+
+				_ = reporters.WriteMarkdownReport(dummyTarget, nFindings, mdFile)
+				_ = reporters.WriteJSONReport(dummyTarget, nFindings, meta, jsonFile)
+				_ = reporters.WriteHTMLReport(dummyTarget, nFindings, meta, htmlFile)
+				if reportSARIF != "" {
+					_ = reporters.WriteSARIFReport(dummyTarget, nFindings, meta, reportSARIF)
+				}
+			}
+			return
+		}
 	}
 
 	// 7. Fast Fuzzer / Subdomain Mode Check
