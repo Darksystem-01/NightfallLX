@@ -43,6 +43,17 @@ type GoogleDork struct {
 	DuckDuckGoURL string `json:"duckduckgo_url,omitempty"`
 }
 
+// AdminPortal represents a detected administration panel, login portal, or management console.
+type AdminPortal struct {
+	URL          string `json:"url"`
+	Type         string `json:"type"`          // "CMS Admin", "Database Console", "SSO/Auth Portal", "DevOps Dashboard", "Admin Panel"
+	StatusCode   int    `json:"status_code"`   // 200, 301, 302, 401, 403
+	Title        string `json:"title,omitempty"`
+	Source       string `json:"source"`         // "Active Probe", "Certificate Subdomain", "Wayback Archive"
+	HasLoginForm bool   `json:"has_login_form"`
+	RedirectURL  string `json:"redirect_url,omitempty"`
+}
+
 // OSINTReport encapsulates all passive intelligence gathered on the target domain.
 type OSINTReport struct {
 	Domain             string            `json:"domain"`
@@ -58,6 +69,7 @@ type OSINTReport struct {
 	SecurityTxt        string            `json:"security_txt,omitempty"`
 	Findings           []OSINTFinding    `json:"findings"`
 	GoogleDorks        []GoogleDork      `json:"google_dorks,omitempty"`
+	AdminPortals       []AdminPortal     `json:"admin_portals,omitempty"`
 	Duration           time.Duration     `json:"duration"`
 }
 
@@ -68,4 +80,6 @@ type Config struct {
 	FetchArchive  bool
 	CheckTakeover bool
 	IncludeDorks  bool
+	CheckAdmin    bool
 }
+

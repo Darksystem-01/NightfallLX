@@ -3,6 +3,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	"net"
 	"net/url"
 	"nightfalllx/pkg/client"
 	"nightfalllx/pkg/detector"
@@ -22,6 +23,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -118,6 +120,7 @@ func main() {
 		autoRegex      bool
 		isOSINT        bool
 		isDorks        bool
+		isAdmin        bool
 	)
 
 	// Target & Input
@@ -147,9 +150,11 @@ func main() {
 	flag.BoolVar(&isMineParams, "param-miner", false, "Alias for --mine-params")
 	flag.BoolVar(&isShodan, "shodan", false, "Run Shodan OSINT intelligence reconnaissance on target IP/domain")
 	flag.StringVar(&shodanKey, "shodan-key", "", "Shodan API Key (optional, reads from SHODAN_API_KEY environment variable)")
-	flag.BoolVar(&isOSINT, "osint", false, "Run comprehensive passive OSINT reconnaissance (crt.sh, DNS, SPF/DMARC, Wayback, GHDB)")
+	flag.BoolVar(&isOSINT, "osint", false, "Run comprehensive passive OSINT reconnaissance (crt.sh, DNS, SPF/DMARC, Wayback, GHDB, Admin Hunter)")
 	flag.BoolVar(&isDorks, "dorks", false, "Generate Exploit-DB GHDB & DorkSearch intelligence queries for the target domain")
 	flag.BoolVar(&isDorks, "ghdb", false, "Alias for --dorks")
+	flag.BoolVar(&isAdmin, "admin", false, "Hunt and fingerprint exposed admin panels, dashboards, and login portals")
+	flag.BoolVar(&isAdmin, "admin-hunter", false, "Alias for --admin")
 
 	// Vulnerability Assessment Modules
 	flag.StringVar(&moduleList, "m", "all", "Comma-separated modules: sqli, ssti, lfi, cmdi, xss, cors, redirect, ssrf, jwt, waf, idor, csrf, xxe, nosqli, upload, headers, exposure, hostheader, crlf, secrets, race, userenum (or 'all')")
@@ -588,6 +593,7 @@ ADVANCED EXPLOITATION & EXPANSION:
 			FetchArchive:  true,
 			CheckTakeover: true,
 			IncludeDorks:  true,
+			CheckAdmin:    true,
 		})
 		if err != nil {
 			fmt.Printf("\033[31m[!] OSINT failed: %v\033[0m\n", err)
@@ -631,6 +637,45 @@ ADVANCED EXPLOITATION & EXPANSION:
 				fmt.Printf("\033[1;32m[+] JSON Dork Dossier saved to: %s\033[0m\n", jsonPath)
 			}
 		}
+		return
+	}
+
+	// 6c-4. Standalone Admin Panel & Login Portal Hunter
+	if isAdmin {
+		targetDomain := domain
+		if targetDomain == "" {
+			if u, err := url.Parse(rawURL); err == nil && u.Hostname() != "" {
+				targetDomain = u.Hostname()
+			} else {
+				targetDomain = rawURL
+			}
+		}
+		targetDomain = osint.CleanDomain(targetDomain)
+		if targetDomain == "" {
+			fmt.Println("\033[31m[!] Please specify a target domain using -domain or -u (e.g. -domain target.lab -admin)\033[0m")
+			os.Exit(1)
+		}
+
+		fmt.Printf("\n\033[1;31m[*] Launching High-Precision Admin Panel & Login Portal Hunter on:\033[0m %s ...\n", targetDomain)
+		var certSubs []string
+		var waybackURLs []string
+		if net.ParseIP(targetDomain) == nil {
+			var subWg sync.WaitGroup
+			subWg.Add(2)
+			go func() {
+				defer subWg.Done()
+				subs, _ := osint.FetchCertSubdomains(targetDomain, 4*time.Second)
+				certSubs = subs
+			}()
+			go func() {
+				defer subWg.Done()
+				urls, _ := osint.FetchWaybackURLs(targetDomain, 4*time.Second)
+				waybackURLs = urls
+			}()
+			subWg.Wait()
+		}
+		portals := osint.HuntAdminPortals(targetDomain, certSubs, waybackURLs, time.Duration(timeoutSec)*time.Second)
+		osint.PrintAdminReport(portals, targetDomain)
 		return
 	}
 

@@ -155,3 +155,59 @@ func TestDorkSyntaxStrictness(t *testing.T) {
 	}
 }
 
+func TestClassifyPortal(t *testing.T) {
+	cases := []struct {
+		url      string
+		title    string
+		body     string
+		expected string
+	}{
+		{"https://example.com/wp-login.php", "Log In ‹ WordPress", "user_login", "WordPress CMS Admin"},
+		{"https://example.com/phpmyadmin/", "phpMyAdmin", "pma_username", "Database Console"},
+		{"https://example.com/grafana/login", "Grafana", "", "Grafana Metrics Console"},
+		{"https://example.com/jenkins/login", "Sign in [Jenkins]", "", "Jenkins CI/CD Portal"},
+		{"https://example.com/sso/login", "Single Sign-On", "", "SSO / Identity Provider"},
+		{"https://example.com/admin/login", "Administration Panel", "", "Administrative Portal"},
+	}
+
+	for _, c := range cases {
+		got := classifyPortal(c.url, c.title, c.body)
+		if got != c.expected {
+			t.Errorf("classifyPortal(%q, %q) = %q; want %q", c.url, c.title, got, c.expected)
+		}
+	}
+}
+
+func TestMockAdminProbe(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/wp-login.php" {
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte(`<html><head><title>WordPress › Log In</title></head><body><form><input type="password" name="pwd"></form></body></html>`))
+			return
+		}
+		if r.URL.Path == "/admin/" {
+			w.WriteHeader(http.StatusForbidden)
+			w.Write([]byte(`<html><head><title>Access Control</title></head><body>Forbidden</body></html>`))
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer ts.Close()
+
+	portals := HuntAdminPortals(ts.URL, nil, nil, 3*time.Second)
+	if len(portals) == 0 {
+		t.Fatal("expected discovered admin portals on mock server, got 0")
+	}
+
+	foundWP := false
+	for _, p := range portals {
+		if strings.Contains(p.URL, "/wp-login.php") && p.HasLoginForm {
+			foundWP = true
+		}
+	}
+	if !foundWP {
+		t.Error("expected to discover exposed wp-login with login form on mock server")
+	}
+}
+
+

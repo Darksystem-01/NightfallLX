@@ -146,6 +146,23 @@ func RunOSINT(cfg Config) (*OSINTReport, error) {
 		}
 	}
 
+	// Task 6: High-Precision Admin Panel & Authentication Portal Hunter
+	if cfg.CheckAdmin {
+		portals := HuntAdminPortals(cleanDomain, certSubs, waybackURLs, cfg.Timeout)
+		finalReport.AdminPortals = portals
+		for _, p := range portals {
+			if p.StatusCode == 200 && p.HasLoginForm {
+				finalReport.Findings = append(finalReport.Findings, OSINTFinding{
+					Title:       fmt.Sprintf("Exposed %s with Authentication Interface", p.Type),
+					Severity:    "HIGH",
+					Description: fmt.Sprintf("Public administrative endpoint %s was discovered exposing an active authentication interface (%s).", p.URL, p.Title),
+					Evidence:    fmt.Sprintf("URL: %s, Status: %d, Title: %s", p.URL, p.StatusCode, p.Title),
+					Remediation: "Enforce strict IP allowlisting, VPN access, and multi-factor authentication (MFA) on administrative portals.",
+				})
+			}
+		}
+	}
+
 	return finalReport, nil
 }
 
@@ -265,6 +282,31 @@ func PrintOSINTReport(rep *OSINTReport) {
 		for _, line := range strings.Split(rep.SecurityTxt, "\n") {
 			if strings.TrimSpace(line) != "" {
 				fmt.Printf("    │ %s\n", line)
+			}
+		}
+		fmt.Println()
+	}
+
+	// 5b. Discovered Admin Panels & Login Portals
+	if len(rep.AdminPortals) > 0 {
+		fmt.Printf("\033[1;31m[🔥] Discovered Admin Panels & Login Portals (%d identified):\033[0m\n", len(rep.AdminPortals))
+		for _, p := range rep.AdminPortals {
+			statusColor := "\033[1;32m" // 200 OK
+			if p.StatusCode == 401 || p.StatusCode == 403 {
+				statusColor = "\033[1;35m"
+			} else if p.StatusCode >= 300 && p.StatusCode < 400 {
+				statusColor = "\033[1;33m"
+			}
+			loginTag := ""
+			if p.HasLoginForm {
+				loginTag = " \033[1;31m[AUTH FORM]\033[0m"
+			}
+			fmt.Printf("    ├── %s[%d]\033[0m \033[1;37m%-24s\033[0m \033[34m%s\033[0m%s\n", statusColor, p.StatusCode, p.Type, p.URL, loginTag)
+			if p.Title != "" {
+				fmt.Printf("    │   ├── Title   : \033[37m%s\033[0m\n", p.Title)
+			}
+			if p.RedirectURL != "" {
+				fmt.Printf("    │   └── Redirect: \033[33m%s\033[0m\n", p.RedirectURL)
 			}
 		}
 		fmt.Println()
