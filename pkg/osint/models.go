@@ -59,6 +59,8 @@ type OSINTReport struct {
 	Domain             string            `json:"domain"`
 	TargetIPs          []string          `json:"target_ips"`
 	CloudProvider      string            `json:"cloud_provider"`
+	ASNInfo            string            `json:"asn_info,omitempty"`
+	CIDRRanges         []string          `json:"cidr_ranges,omitempty"`
 	NameServers        []string          `json:"name_servers"`
 	MailServers        []string          `json:"mail_servers"`
 	SPFRecord          string            `json:"spf_record"`
@@ -70,6 +72,9 @@ type OSINTReport struct {
 	Findings           []OSINTFinding    `json:"findings"`
 	GoogleDorks        []GoogleDork      `json:"google_dorks,omitempty"`
 	AdminPortals       []AdminPortal     `json:"admin_portals,omitempty"`
+	AXFRResults        []string          `json:"axfr_results,omitempty"`
+	Emails             []string          `json:"emails,omitempty"`
+	EmailPattern       string            `json:"email_pattern,omitempty"`
 	Duration           time.Duration     `json:"duration"`
 }
 
@@ -81,5 +86,8 @@ type Config struct {
 	CheckTakeover bool
 	IncludeDorks  bool
 	CheckAdmin    bool
+	CheckAXFR     bool
+	CheckEmails   bool
+	CheckASN      bool
 }
 

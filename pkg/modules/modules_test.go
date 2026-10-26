@@ -559,3 +559,38 @@ func TestCRLFModule(t *testing.T) {
 	}
 }
 
+func TestRun403Bypass(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// If X-Forwarded-For is 127.0.0.1 or path ends in ..;/admin, bypass to 200 OK!
+		if r.Header.Get("X-Forwarded-For") == "127.0.0.1" || strings.HasSuffix(r.URL.Path, "..;/admin") {
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte("ADMIN_GRANTED"))
+			return
+		}
+		// Default 403 Forbidden
+		w.WriteHeader(http.StatusForbidden)
+		w.Write([]byte("403 Forbidden"))
+	}))
+	defer ts.Close()
+
+	c := client.NewClient("", 2*time.Second, true, "", nil)
+	report := Run403Bypass(ts.URL+"/admin", c)
+	if report.BaselineStatus != http.StatusForbidden {
+		t.Errorf("expected baseline status 403, got %d", report.BaselineStatus)
+	}
+	if len(report.Successful) == 0 {
+		t.Fatal("expected successful bypass vectors on vulnerable mock server, got 0")
+	}
+
+	foundXFF := false
+	for _, s := range report.Successful {
+		if strings.Contains(s.Technique, "X-Forwarded-For") {
+			foundXFF = true
+		}
+	}
+	if !foundXFF {
+		t.Error("expected X-Forwarded-For bypass technique in successful list")
+	}
+}
+
+

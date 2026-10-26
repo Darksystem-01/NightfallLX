@@ -210,4 +210,34 @@ func TestMockAdminProbe(t *testing.T) {
 	}
 }
 
+func TestBuildAXFRQuery(t *testing.T) {
+	frame := buildAXFRQuery("example.com")
+	if len(frame) < 18 {
+		t.Fatalf("expected AXFR frame len >= 18, got %d", len(frame))
+	}
+	// Check QTYPE 252 (0x00FC) in question tail
+	qtype := frame[len(frame)-4:]
+	if qtype[0] != 0x00 || qtype[1] != 0xFC {
+		t.Errorf("expected QTYPE 252 (AXFR), got %x %x", qtype[0], qtype[1])
+	}
+}
+
+func TestHarvestEmails(t *testing.T) {
+	secTxt := "Contact: mailto:security@target.com\nContact: admin@target.com\n"
+	wayback := []string{
+		"https://target.com/contact?mail=john.doe@target.com",
+		"https://target.com/team/jane.smith@target.com",
+		"https://other.com/junk.png",
+	}
+
+	dossier := HarvestEmails("target.com", wayback, secTxt, 3*time.Second)
+	if dossier.TotalFound < 3 {
+		t.Errorf("expected at least 3 emails, got %d", dossier.TotalFound)
+	}
+	if dossier.Pattern == "" {
+		t.Error("expected detected email pattern, got empty")
+	}
+}
+
+
 

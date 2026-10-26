@@ -89,6 +89,31 @@ func RunOSINT(cfg Config) (*OSINTReport, error) {
 		finalReport.DMARCRecord = dnsRep.DMARCRecord
 		finalReport.DMARCStatus = dnsRep.DMARCStatus
 		finalReport.Findings = append(finalReport.Findings, dnsRep.Findings...)
+
+		// Task 1b: Passive Team Cymru ASN & BGP Network Range Discovery
+		if cfg.CheckASN && len(dnsRep.TargetIPs) > 0 {
+			if asnRec, err := LookupASN(dnsRep.TargetIPs[0], 3*time.Second); err == nil && asnRec != nil {
+				finalReport.ASNInfo = fmt.Sprintf("%s (%s, %s)", asnRec.ASN, asnRec.OrgName, asnRec.Country)
+				if asnRec.CIDR != "" {
+					finalReport.CIDRRanges = append(finalReport.CIDRRanges, asnRec.CIDR)
+				}
+			}
+		}
+
+		// Task 1c: DNS Zone Transfer (AXFR) Audit
+		if cfg.CheckAXFR && len(dnsRep.NameServers) > 0 {
+			isVuln, vulnNS, records := TestAXFR(cleanDomain, dnsRep.NameServers, 3*time.Second)
+			if isVuln {
+				finalReport.AXFRResults = records
+				finalReport.Findings = append(finalReport.Findings, OSINTFinding{
+					Title:       fmt.Sprintf("Critical DNS Zone Transfer (AXFR) Leak on %s", vulnNS),
+					Severity:    "CRITICAL",
+					Description: fmt.Sprintf("Name server %s allows unauthenticated AXFR zone transfers, allowing external attackers to dump the entire internal DNS zone for %s.", vulnNS, cleanDomain),
+					Evidence:    fmt.Sprintf("Vulnerable NS: %s (Zone transfer accepted)", vulnNS),
+					Remediation: "Restrict AXFR zone transfers to authorized secondary nameservers only via TSIG keys or 'allow-transfer' IP restrictions.",
+				})
+			}
+		}
 	}
 
 	// Subdomain Resolution & Takeover Checks (Parallel)
@@ -163,6 +188,13 @@ func RunOSINT(cfg Config) (*OSINTReport, error) {
 		}
 	}
 
+	// Task 7: Corporate Email Intelligence & Pattern Hunter
+	if cfg.CheckEmails {
+		dossier := HarvestEmails(cleanDomain, waybackURLs, secTxt, 3*time.Second)
+		finalReport.Emails = dossier.Emails
+		finalReport.EmailPattern = dossier.Pattern
+	}
+
 	return finalReport, nil
 }
 
@@ -203,11 +235,20 @@ func PrintOSINTReport(rep *OSINTReport) {
 	// 1. Infrastructure Overview
 	fmt.Println("\033[1;36m[+] Infrastructure & Network Intelligence:\033[0m")
 	fmt.Printf("    ├── Cloud Provider  : \033[1;32m%s\033[0m\n", rep.CloudProvider)
+	if rep.ASNInfo != "" {
+		fmt.Printf("    ├── ASN / BGP Info  : \033[1;35m%s\033[0m\n", rep.ASNInfo)
+	}
+	if len(rep.CIDRRanges) > 0 {
+		fmt.Printf("    ├── Network CIDR    : \033[1;33m%s\033[0m\n", strings.Join(rep.CIDRRanges, ", "))
+	}
 	if len(rep.TargetIPs) > 0 {
 		fmt.Printf("    ├── Resolved IPs    : %s\n", strings.Join(rep.TargetIPs, ", "))
 	}
 	if len(rep.NameServers) > 0 {
 		fmt.Printf("    ├── Name Servers    : %s\n", strings.Join(rep.NameServers, ", "))
+	}
+	if len(rep.AXFRResults) > 0 {
+		fmt.Printf("    ├── \033[1;31mDNS Zone (AXFR) : [VULNERABLE - %d records leaked!]\033[0m\n", len(rep.AXFRResults))
 	}
 	if len(rep.MailServers) > 0 {
 		fmt.Printf("    └── Mail Servers    : %s\n", strings.Join(rep.MailServers, ", "))
@@ -308,6 +349,25 @@ func PrintOSINTReport(rep *OSINTReport) {
 			if p.RedirectURL != "" {
 				fmt.Printf("    │   └── Redirect: \033[33m%s\033[0m\n", p.RedirectURL)
 			}
+		}
+		fmt.Println()
+	}
+
+	// 5c. Discovered Corporate Emails & Patterns
+	if len(rep.Emails) > 0 {
+		fmt.Printf("\033[1;36m[📧] Discovered Corporate Emails (%d identified):\033[0m\n", len(rep.Emails))
+		if rep.EmailPattern != "" {
+			fmt.Printf("    ├── \033[1;35mCorporate Pattern: \033[1;37m%s\033[0m\n", rep.EmailPattern)
+		}
+		limit := 6
+		if len(rep.Emails) < limit {
+			limit = len(rep.Emails)
+		}
+		for i := 0; i < limit; i++ {
+			fmt.Printf("    ├── [%d] \033[33m%s\033[0m\n", i+1, rep.Emails[i])
+		}
+		if len(rep.Emails) > limit {
+			fmt.Printf("    └── ... and %d more corporate addresses.\n", len(rep.Emails)-limit)
 		}
 		fmt.Println()
 	}

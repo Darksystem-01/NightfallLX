@@ -121,6 +121,8 @@ func main() {
 		isOSINT        bool
 		isDorks        bool
 		isAdmin        bool
+		isEmails       bool
+		is403Bypass    bool
 	)
 
 	// Target & Input
@@ -155,6 +157,9 @@ func main() {
 	flag.BoolVar(&isDorks, "ghdb", false, "Alias for --dorks")
 	flag.BoolVar(&isAdmin, "admin", false, "Hunt and fingerprint exposed admin panels, dashboards, and login portals")
 	flag.BoolVar(&isAdmin, "admin-hunter", false, "Alias for --admin")
+	flag.BoolVar(&isEmails, "emails", false, "Harvest corporate email addresses and detect corporate email naming pattern")
+	flag.BoolVar(&is403Bypass, "bypass-403", false, "Test 30+ authorization bypass vectors on 403 Forbidden / 401 Unauthorized endpoints")
+	flag.BoolVar(&is403Bypass, "bypass", false, "Alias for --bypass-403")
 
 	// Vulnerability Assessment Modules
 	flag.StringVar(&moduleList, "m", "all", "Comma-separated modules: sqli, ssti, lfi, cmdi, xss, cors, redirect, ssrf, jwt, waf, idor, csrf, xxe, nosqli, upload, headers, exposure, hostheader, crlf, secrets, race, userenum (or 'all')")
@@ -594,6 +599,9 @@ ADVANCED EXPLOITATION & EXPANSION:
 			CheckTakeover: true,
 			IncludeDorks:  true,
 			CheckAdmin:    true,
+			CheckAXFR:     true,
+			CheckEmails:   true,
+			CheckASN:      true,
 		})
 		if err != nil {
 			fmt.Printf("\033[31m[!] OSINT failed: %v\033[0m\n", err)
@@ -676,6 +684,42 @@ ADVANCED EXPLOITATION & EXPANSION:
 		}
 		portals := osint.HuntAdminPortals(targetDomain, certSubs, waybackURLs, time.Duration(timeoutSec)*time.Second)
 		osint.PrintAdminReport(portals, targetDomain)
+		return
+	}
+
+	// 6c-5. Standalone Corporate Email & Pattern Hunter
+	if isEmails {
+		targetDomain := domain
+		if targetDomain == "" {
+			if u, err := url.Parse(rawURL); err == nil && u.Hostname() != "" {
+				targetDomain = u.Hostname()
+			} else {
+				targetDomain = rawURL
+			}
+		}
+		targetDomain = osint.CleanDomain(targetDomain)
+		if targetDomain == "" {
+			fmt.Println("\033[31m[!] Please specify a target domain using -domain or -u (e.g. -domain target.com -emails)\033[0m")
+			os.Exit(1)
+		}
+
+		fmt.Printf("\n\033[1;36m[*] Harvesting Corporate Email Addresses on:\033[0m %s ...\n", targetDomain)
+		waybackURLs, _ := osint.FetchWaybackURLs(targetDomain, 5*time.Second)
+		dossier := osint.HarvestEmails(targetDomain, waybackURLs, "", time.Duration(timeoutSec)*time.Second)
+		osint.PrintEmailReport(dossier)
+		return
+	}
+
+	// 6c-6. Standalone 403/401 Authorization Bypass Engine
+	if is403Bypass {
+		if rawURL == "" {
+			fmt.Println("\033[31m[!] Please specify a target URL using -u (e.g. -u https://target.com/admin -bypass-403)\033[0m")
+			os.Exit(1)
+		}
+		httpClient := client.NewClient(proxy, time.Duration(timeoutSec)*time.Second, insecure, cookie, parsedHeaders)
+		fmt.Printf("\n\033[1;31m[*] Launching 403/401 Authorization Bypass Sweep on:\033[0m %s ...\n", rawURL)
+		rep := modules.Run403Bypass(rawURL, httpClient)
+		modules.PrintBypassReport(rep)
 		return
 	}
 
