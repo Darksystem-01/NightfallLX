@@ -593,4 +593,49 @@ func TestRun403Bypass(t *testing.T) {
 	}
 }
 
+func TestRunGraphQLAudit(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/graphql" {
+			w.Header().Set("Content-Type", "application/json")
+			bodyBuf := make([]byte, 512)
+			n, _ := r.Body.Read(bodyBuf)
+			bodyStr := string(bodyBuf[:n])
+
+			if strings.HasPrefix(bodyStr, "[") {
+				w.WriteHeader(http.StatusOK)
+				w.Write([]byte(`[{"data":{"__typename":"Query"}},{"data":{"__typename":"Query"}}]`))
+				return
+			}
+
+			if strings.Contains(bodyStr, "__schema") {
+				w.WriteHeader(http.StatusOK)
+				w.Write([]byte(`{"data":{"__schema":{"queryType":{"name":"Query"},"mutationType":{"name":"Mutation"},"types":[{"name":"User","fields":[{"name":"id"},{"name":"email"}]},{"name":"Query","fields":[{"name":"getUsers"}]}]}}}`))
+				return
+			}
+
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte(`{"data":{"__typename":"Query"}}`))
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer ts.Close()
+
+	c := client.NewClient("", 2*time.Second, true, "", nil)
+	rep := RunGraphQLAudit(ts.URL, c)
+	if rep.Endpoint == "" {
+		t.Fatal("expected discovered GraphQL endpoint, got none")
+	}
+	if !rep.IntrospectionOpen {
+		t.Error("expected introspection to be detected as open")
+	}
+	if !rep.BatchingAllowed {
+		t.Error("expected batching to be detected as allowed")
+	}
+	if len(rep.QueriesDiscovered) == 0 {
+		t.Error("expected discovered queries from mock schema")
+	}
+}
+
+
 

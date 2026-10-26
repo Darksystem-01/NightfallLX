@@ -123,6 +123,7 @@ func main() {
 		isAdmin        bool
 		isEmails       bool
 		is403Bypass    bool
+		isGraphQL      bool
 	)
 
 	// Target & Input
@@ -160,6 +161,8 @@ func main() {
 	flag.BoolVar(&isEmails, "emails", false, "Harvest corporate email addresses and detect corporate email naming pattern")
 	flag.BoolVar(&is403Bypass, "bypass-403", false, "Test 30+ authorization bypass vectors on 403 Forbidden / 401 Unauthorized endpoints")
 	flag.BoolVar(&is403Bypass, "bypass", false, "Alias for --bypass-403")
+	flag.BoolVar(&isGraphQL, "graphql", false, "Audit GraphQL instances for exposed introspection, query batching, and schema leaks")
+	flag.BoolVar(&isGraphQL, "api-audit", false, "Alias for --graphql")
 
 	// Vulnerability Assessment Modules
 	flag.StringVar(&moduleList, "m", "all", "Comma-separated modules: sqli, ssti, lfi, cmdi, xss, cors, redirect, ssrf, jwt, waf, idor, csrf, xxe, nosqli, upload, headers, exposure, hostheader, crlf, secrets, race, userenum (or 'all')")
@@ -720,6 +723,19 @@ ADVANCED EXPLOITATION & EXPANSION:
 		fmt.Printf("\n\033[1;31m[*] Launching 403/401 Authorization Bypass Sweep on:\033[0m %s ...\n", rawURL)
 		rep := modules.Run403Bypass(rawURL, httpClient)
 		modules.PrintBypassReport(rep)
+		return
+	}
+
+	// 6c-7. Standalone GraphQL & Modern API Security Auditing Engine
+	if isGraphQL {
+		if rawURL == "" {
+			fmt.Println("\033[31m[!] Please specify a target URL using -u (e.g. -u https://target.com/graphql -graphql)\033[0m")
+			os.Exit(1)
+		}
+		httpClient := client.NewClient(proxy, time.Duration(timeoutSec)*time.Second, insecure, cookie, parsedHeaders)
+		fmt.Printf("\n\033[1;35m[*] Launching GraphQL & Modern API Security Auditing on:\033[0m %s ...\n", rawURL)
+		rep := modules.RunGraphQLAudit(rawURL, httpClient)
+		modules.PrintGraphQLReport(rep)
 		return
 	}
 
