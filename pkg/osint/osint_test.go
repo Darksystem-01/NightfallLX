@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -79,5 +80,50 @@ func TestLiveDNSAudit(t *testing.T) {
 	}
 	if rep.SPFRecord == "" {
 		t.Log("Note: SPF record was empty or unresolvable in environment")
+	}
+}
+
+func TestGenerateDorks(t *testing.T) {
+	domain := "example.com"
+	dorks := GenerateDorks(domain)
+	if len(dorks) == 0 {
+		t.Fatal("expected generated dorks, got 0")
+	}
+
+	foundSecrets := false
+	foundCloud := false
+	for _, d := range dorks {
+		if !strings.Contains(d.Query, domain) {
+			t.Errorf("dork query does not contain target domain: %s", d.Query)
+		}
+		if !strings.HasPrefix(d.GoogleURL, "https://www.google.com/search?q=") {
+			t.Errorf("invalid google url format: %s", d.GoogleURL)
+		}
+		if !strings.HasPrefix(d.DorkSearchURL, "https://dorksearch.com/?q=") {
+			t.Errorf("invalid dorksearch url format: %s", d.DorkSearchURL)
+		}
+		if d.Category == "Secrets & Credentials" {
+			foundSecrets = true
+		}
+		if d.Category == "Cloud & 3rd-Party Leaks" {
+			foundCloud = true
+		}
+	}
+
+	if !foundSecrets {
+		t.Error("expected 'Secrets & Credentials' dorks in generated list")
+	}
+	if !foundCloud {
+		t.Error("expected 'Cloud & 3rd-Party Leaks' dorks in generated list")
+	}
+
+	jsonStr, err := ExportDorksJSON(dorks)
+	if err != nil || len(jsonStr) == 0 {
+		t.Errorf("ExportDorksJSON failed: %v", err)
+	}
+
+	tmpFile := t.TempDir() + "/dorks.html"
+	if err := ExportDorksHTML(domain, dorks, tmpFile); err != nil {
+		t.Errorf("ExportDorksHTML failed: %v", err)
 	}
 }

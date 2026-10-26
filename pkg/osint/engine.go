@@ -64,12 +64,19 @@ func RunOSINT(cfg Config) (*OSINTReport, error) {
 		secTxt = checkSecurityTxt(cleanDomain, cfg.Timeout)
 	}()
 
+	// Task 5: Exploit-DB GHDB & DorkSearch Generation
+	var ghdbDorks []GoogleDork
+	if cfg.IncludeDorks {
+		ghdbDorks = GenerateDorks(cleanDomain)
+	}
+
 	wg.Wait()
 
 	finalReport := &OSINTReport{
 		Domain:             cleanDomain,
 		SensitiveEndpoints: waybackURLs,
 		SecurityTxt:        secTxt,
+		GoogleDorks:        ghdbDorks,
 		Duration:           time.Since(start),
 	}
 
@@ -274,6 +281,25 @@ func PrintOSINTReport(rep *OSINTReport) {
 			fmt.Printf("    %s[%-8s]\033[0m \033[1m%s\033[0m\n", sevColor, f.Severity, f.Title)
 			fmt.Printf("             Evidence : %s\n", f.Evidence)
 			fmt.Printf("             Fix      : %s\n", f.Remediation)
+		}
+		fmt.Println()
+	}
+
+	// 7. Exploit-DB GHDB & DorkSearch Queries
+	if len(rep.GoogleDorks) > 0 {
+		fmt.Printf("\033[1;36m[+] Exploit-DB GHDB & DorkSearch Queries (%d intelligence vectors):\033[0m\n", len(rep.GoogleDorks))
+		limit := 6
+		if len(rep.GoogleDorks) < limit {
+			limit = len(rep.GoogleDorks)
+		}
+		for i := 0; i < limit; i++ {
+			d := rep.GoogleDorks[i]
+			fmt.Printf("    ├── \033[1;37m%-35s\033[0m [\033[36m%s\033[0m]\n", d.Description, d.GHDBSection)
+			fmt.Printf("    │   ├── Query: \033[33m%s\033[0m\n", d.Query)
+			fmt.Printf("    │   └── Links: \033[34m[Google]\033[0m %s | \033[32m[DorkSearch]\033[0m %s\n", d.GoogleURL, d.DorkSearchURL)
+		}
+		if len(rep.GoogleDorks) > limit {
+			fmt.Printf("    └── ... and \033[1m%d\033[0m more specialized GHDB dorks (run with \033[1m-dorks\033[0m for full dossier & HTML dashboard).\n", len(rep.GoogleDorks)-limit)
 		}
 		fmt.Println()
 	}

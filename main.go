@@ -117,6 +117,7 @@ func main() {
 		filterRegexStr string
 		autoRegex      bool
 		isOSINT        bool
+		isDorks        bool
 	)
 
 	// Target & Input
@@ -146,7 +147,9 @@ func main() {
 	flag.BoolVar(&isMineParams, "param-miner", false, "Alias for --mine-params")
 	flag.BoolVar(&isShodan, "shodan", false, "Run Shodan OSINT intelligence reconnaissance on target IP/domain")
 	flag.StringVar(&shodanKey, "shodan-key", "", "Shodan API Key (optional, reads from SHODAN_API_KEY environment variable)")
-	flag.BoolVar(&isOSINT, "osint", false, "Run comprehensive passive OSINT reconnaissance (crt.sh, DNS, SPF/DMARC, Wayback Archive)")
+	flag.BoolVar(&isOSINT, "osint", false, "Run comprehensive passive OSINT reconnaissance (crt.sh, DNS, SPF/DMARC, Wayback, GHDB)")
+	flag.BoolVar(&isDorks, "dorks", false, "Generate Exploit-DB GHDB & DorkSearch intelligence queries for the target domain")
+	flag.BoolVar(&isDorks, "ghdb", false, "Alias for --dorks")
 
 	// Vulnerability Assessment Modules
 	flag.StringVar(&moduleList, "m", "all", "Comma-separated modules: sqli, ssti, lfi, cmdi, xss, cors, redirect, ssrf, jwt, waf, idor, csrf, xxe, nosqli, upload, headers, exposure, hostheader, crlf, secrets, race, userenum (or 'all')")
@@ -234,6 +237,7 @@ USAGE:
   nightfalllx -tech -u <target-url>
   nightfalllx -map -u <target-url>
   nightfalllx -shodan -u <target-url>
+  nightfalllx -domain <target.com> -dorks
   nightfalllx -r <burp-request.txt> [options]
   nightfalllx -u "http://target.lab/FUZZ" -w wordlist.txt
   nightfalllx -i   (Launch Interactive Mouse-Controllable Dashboard)
@@ -250,7 +254,8 @@ ASSESSMENT, OSINT & RECON:
   -depth int       Crawler recursion depth (default: 3)
   -max-urls int    Max URLs to discover during spidering (default: 50)
   -shodan          Run Shodan OSINT reconnaissance (subdomains, ports, CVEs)
-  -osint           Comprehensive passive OSINT (crt.sh, DNS, SPF/DMARC, Wayback Archive)
+  -osint           Comprehensive passive OSINT (crt.sh, DNS, SPF/DMARC, Wayback, GHDB)
+  -dorks, -ghdb    Generate Exploit-DB GHDB & DorkSearch intelligence dossier & clickable links
   -mine-params     Run automated hidden parameter miner (reflection/diff analysis)
   -shodan-key str  Shodan API Key (optional, reads from SHODAN_API_KEY env)
   -m string        Modules to run: sqli, ssti, lfi, cmdi, xss, cors, redirect, ssrf, jwt, waf (default: "all")
@@ -324,7 +329,7 @@ ADVANCED EXPLOITATION & EXPANSION:
 	}
 
 	// If no arguments or target given, show standard usage
-	if len(os.Args) == 1 || (rawURL == "" && rawReqFile == "" && domain == "" && !isDoctor && !isScan && !isOSINT) {
+	if len(os.Args) == 1 || (rawURL == "" && rawReqFile == "" && domain == "" && !isDoctor && !isScan && !isOSINT && !isDorks) {
 		flag.Usage()
 		return
 	}
@@ -437,7 +442,7 @@ ADVANCED EXPLOITATION & EXPANSION:
 		rawURL = domain
 	}
 
-	if rawURL == "" && !isScan && !isOSINT {
+	if rawURL == "" && !isScan && !isOSINT && !isDorks {
 		fmt.Println("\033[1;36mNightfallLX (Go Edition)\033[0m - High-Performance Web Assessment & Fuzzer")
 		fmt.Println("Usage:")
 		fmt.Println("  nightfalllx -i                                               # Launch interactive Mouse-controlled Dashboard")
@@ -582,12 +587,50 @@ ADVANCED EXPLOITATION & EXPANSION:
 			Timeout:       time.Duration(timeoutSec) * time.Second,
 			FetchArchive:  true,
 			CheckTakeover: true,
+			IncludeDorks:  true,
 		})
 		if err != nil {
 			fmt.Printf("\033[31m[!] OSINT failed: %v\033[0m\n", err)
 			os.Exit(1)
 		}
 		osint.PrintOSINTReport(rep)
+		return
+	}
+
+	// 6c-3. Standalone Exploit-DB GHDB & DorkSearch OSINT Engine
+	if isDorks {
+		targetDomain := domain
+		if targetDomain == "" {
+			if u, err := url.Parse(rawURL); err == nil && u.Hostname() != "" {
+				targetDomain = u.Hostname()
+			} else {
+				targetDomain = rawURL
+			}
+		}
+		targetDomain = strings.TrimPrefix(targetDomain, "http://")
+		targetDomain = strings.TrimPrefix(targetDomain, "https://")
+		if idx := strings.Index(targetDomain, "/"); idx != -1 {
+			targetDomain = targetDomain[:idx]
+		}
+		if idx := strings.Index(targetDomain, ":"); idx != -1 {
+			targetDomain = targetDomain[:idx]
+		}
+
+		fmt.Printf("\n\033[1;31m[*] Generating Exploit-DB GHDB & DorkSearch Intelligence for:\033[0m %s ...\n", targetDomain)
+		dorks := osint.GenerateDorks(targetDomain)
+		osint.PrintDorksReport(targetDomain, dorks)
+
+		if output != "" {
+			htmlPath := output + "_dorks.html"
+			if err := osint.ExportDorksHTML(targetDomain, dorks, htmlPath); err == nil {
+				fmt.Printf("\033[1;32m[+] Interactive HTML Dork Dashboard saved to: %s\033[0m\n", htmlPath)
+			}
+			jsonPath := output + "_dorks.json"
+			if jsonStr, err := osint.ExportDorksJSON(dorks); err == nil {
+				_ = os.WriteFile(jsonPath, []byte(jsonStr), 0644)
+				fmt.Printf("\033[1;32m[+] JSON Dork Dossier saved to: %s\033[0m\n", jsonPath)
+			}
+		}
 		return
 	}
 

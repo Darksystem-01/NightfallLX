@@ -30,6 +30,18 @@ type SubdomainResult struct {
 	Takeover string   `json:"takeover_risk,omitempty"`
 }
 
+// GoogleDork holds a targeted Exploit-DB GHDB / DorkSearch reconnaissance query.
+type GoogleDork struct {
+	Category      string `json:"category"`
+	Description   string `json:"description"`
+	Query         string `json:"query"`
+	Severity      string `json:"severity"` // "CRITICAL", "HIGH", "MEDIUM", "INFO"
+	GHDBSection   string `json:"ghdb_section"`
+	GoogleURL     string `json:"google_url"`
+	DorkSearchURL string `json:"dorksearch_url"`
+	BingURL       string `json:"bing_url"`
+}
+
 // OSINTReport encapsulates all passive intelligence gathered on the target domain.
 type OSINTReport struct {
 	Domain             string            `json:"domain"`
@@ -44,13 +56,15 @@ type OSINTReport struct {
 	SensitiveEndpoints []string          `json:"sensitive_endpoints"`
 	SecurityTxt        string            `json:"security_txt,omitempty"`
 	Findings           []OSINTFinding    `json:"findings"`
+	GoogleDorks        []GoogleDork      `json:"google_dorks,omitempty"`
 	Duration           time.Duration     `json:"duration"`
 }
 
 // Config defines execution parameters for OSINT reconnaissance.
 type Config struct {
-	Domain      string
-	Timeout     time.Duration
-	FetchArchive bool
+	Domain        string
+	Timeout       time.Duration
+	FetchArchive  bool
 	CheckTakeover bool
+	IncludeDorks  bool
 }
