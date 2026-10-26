@@ -127,3 +127,31 @@ func TestGenerateDorks(t *testing.T) {
 		t.Errorf("ExportDorksHTML failed: %v", err)
 	}
 }
+
+func TestCleanDomain(t *testing.T) {
+	cases := []struct {
+		input    string
+		expected string
+	}{
+		{"https://www.example.com/path", "example.com"},
+		{"http://example.com:8080/test?a=1", "example.com"},
+		{"www.sub.example.com", "sub.example.com"},
+		{"TARGET.COM", "target.com"},
+	}
+	for _, c := range cases {
+		got := CleanDomain(c.input)
+		if got != c.expected {
+			t.Errorf("CleanDomain(%q) = %q; want %q", c.input, got, c.expected)
+		}
+	}
+}
+
+func TestDorkSyntaxStrictness(t *testing.T) {
+	dorks := GenerateDorks("testsite.com")
+	for _, d := range dorks {
+		if strings.Contains(d.Query, " | ") {
+			t.Errorf("dork query contains unparenthesized '|' pipe operator instead of 'OR': %s", d.Query)
+		}
+	}
+}
+

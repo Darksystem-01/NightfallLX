@@ -40,6 +40,7 @@ type GoogleDork struct {
 	GoogleURL     string `json:"google_url"`
 	DorkSearchURL string `json:"dorksearch_url"`
 	BingURL       string `json:"bing_url"`
+	DuckDuckGoURL string `json:"duckduckgo_url,omitempty"`
 }
 
 // OSINTReport encapsulates all passive intelligence gathered on the target domain.
