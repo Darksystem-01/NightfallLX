@@ -7,6 +7,7 @@ import (
 	"math"
 	"net/url"
 	"nightfalllx/pkg/client"
+	"nightfalllx/pkg/wordlists"
 	"sort"
 	"strings"
 	"sync"
@@ -92,7 +93,12 @@ func NewParamMiner(cfg *MinerConfig) *ParamMiner {
 		cfg.Concurrency = 5
 	}
 	if len(cfg.Wordlist) == 0 {
-		cfg.Wordlist = Top200HiddenParams
+		embedded := wordlists.GetWordlist("parameters", "")
+		if len(embedded) > 0 {
+			cfg.Wordlist = embedded
+		} else {
+			cfg.Wordlist = Top200HiddenParams
+		}
 	}
 	if cfg.Timeout <= 0 {
 		cfg.Timeout = 10 * time.Second

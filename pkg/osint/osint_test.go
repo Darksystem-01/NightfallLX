@@ -96,7 +96,7 @@ func TestGenerateDorks(t *testing.T) {
 		if !strings.HasPrefix(d.GoogleURL, "https://www.google.com/search?q=") {
 			t.Errorf("invalid google url format: %s", d.GoogleURL)
 		}
-		if !strings.HasPrefix(d.DorkSearchURL, "https://dorksearch.com/?q=") {
+		if !strings.HasPrefix(d.DorkSearchURL, "https://duckduckgo.com/?q=") && !strings.HasPrefix(d.DorkSearchURL, "https://dorksearch.com/?q=") {
 			t.Errorf("invalid dorksearch url format: %s", d.DorkSearchURL)
 		}
 		if d.Category == "Secrets & Credentials" {

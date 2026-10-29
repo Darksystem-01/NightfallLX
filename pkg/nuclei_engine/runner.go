@@ -26,6 +26,7 @@ type NucleiRunnerConfig struct {
 	Concurrency    int
 	TimeoutSec     int
 	Engine         string // "auto", "official", "internal"
+	CustomArgs     string // Custom raw arguments to pass directly to official nuclei
 	Proxy          string
 	Headers        map[string]string
 	Client         *client.Client
@@ -42,6 +43,7 @@ type OfficialNucleiFinding struct {
 		Author         interface{} `json:"author"`
 		Tags           interface{} `json:"tags"`
 		Description    string      `json:"description"`
+		Reference      interface{} `json:"reference"`
 		Severity       string      `json:"severity"`
 		Classification struct {
 			CVEID      []string    `json:"cve-id"`
@@ -59,6 +61,8 @@ type OfficialNucleiFinding struct {
 	MatchedAt        string   `json:"matched-at"`
 	ExtractedResults []string `json:"extracted-results"`
 	CurlCommand      string   `json:"curl-command"`
+	Request          string   `json:"request,omitempty"`
+	Response         string   `json:"response,omitempty"`
 	IP               string   `json:"ip"`
 	Timestamp        string   `json:"timestamp"`
 }
@@ -98,23 +102,28 @@ func FindTemplatesDir() (string, error) {
 	candidates := []string{
 		filepath.Join(homeDir, "Pentesting", "nuclei-templates"),
 		"/home/cyborg/Pentesting/nuclei-templates",
+		filepath.Join(homeDir, "tools", "nuclei-templates"),
+		"/home/cyborg/tools/nuclei-templates",
 		filepath.Join(homeDir, "nuclei-templates"),
 		"/home/cyborg/nuclei-templates",
 		filepath.Join(homeDir, ".local", "nuclei-templates"),
 		"./nuclei-templates",
+		"/usr/share/nuclei-templates",
 		"/root/nuclei-templates",
 	}
 
 	for _, c := range candidates {
 		if fi, err := os.Stat(c); err == nil && fi.IsDir() {
-			// Check if it contains templates (e.g. http or cves)
+			// Verify it actually contains templates
 			if _, err := os.Stat(filepath.Join(c, "http")); err == nil {
 				return c, nil
 			}
 			if _, err := os.Stat(filepath.Join(c, "cves.json")); err == nil {
 				return c, nil
 			}
-			return c, nil
+			if _, err := os.Stat(filepath.Join(c, "cloud")); err == nil {
+				return c, nil
+			}
 		}
 	}
 
@@ -170,6 +179,13 @@ func RunOfficialNuclei(cfg NucleiRunnerConfig) ([]*modules.Finding, error) {
 		timeoutSec = 5
 	}
 
+	tags := cfg.Tags
+	if strings.ToLower(strings.TrimSpace(tags)) == "all" {
+		tags = ""
+	} else if tags == "" && cfg.TemplatesPath == "" && cfg.CustomArgs == "" {
+		tags = "cve,misconfig,exposure"
+	}
+
 	args := []string{
 		"-target", cfg.TargetURL,
 		"-t", tmplPath,
@@ -178,10 +194,11 @@ func RunOfficialNuclei(cfg NucleiRunnerConfig) ([]*modules.Finding, error) {
 		"-retries", "1",
 		"-jsonl",
 		"-silent",
+		"-duc",
 	}
 
-	if cfg.Tags != "" {
-		args = append(args, "-tags", cfg.Tags)
+	if tags != "" {
+		args = append(args, "-tags", tags)
 	}
 	if cfg.Severity != "" {
 		args = append(args, "-severity", cfg.Severity)
@@ -191,6 +208,9 @@ func RunOfficialNuclei(cfg NucleiRunnerConfig) ([]*modules.Finding, error) {
 	}
 	for k, v := range cfg.Headers {
 		args = append(args, "-H", fmt.Sprintf("%s: %s", k, v))
+	}
+	if cfg.CustomArgs != "" {
+		args = append(args, strings.Fields(cfg.CustomArgs)...)
 	}
 
 	cmd := exec.Command(binPath, args...)
@@ -295,22 +315,55 @@ func convertOfficialToFinding(item *OfficialNucleiFinding) *modules.Finding {
 	}
 
 	cvss := item.Info.Classification.CVSSScore
+	cvssVector := item.Info.Classification.CVSSMetric
 	if cvss == 0 {
 		switch sev {
 		case modules.SeverityCritical:
 			cvss = 9.8
+			if cvssVector == "" {
+				cvssVector = "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"
+			}
 		case modules.SeverityHigh:
 			cvss = 7.5
+			if cvssVector == "" {
+				cvssVector = "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:N/A:N"
+			}
 		case modules.SeverityMedium:
 			cvss = 5.3
+			if cvssVector == "" {
+				cvssVector = "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:L/I:N/A:N"
+			}
 		case modules.SeverityLow:
 			cvss = 3.1
+			if cvssVector == "" {
+				cvssVector = "CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:U/C:L/I:N/A:N"
+			}
 		default:
 			cvss = 0.0
 		}
 	}
 
-	return &modules.Finding{
+	remediation := "Review official CVE / advisory documentation for this template ID and patch affected software."
+	var refs []string
+	if item.Info.Reference != nil {
+		switch r := item.Info.Reference.(type) {
+		case string:
+			if r != "" {
+				refs = append(refs, r)
+			}
+		case []interface{}:
+			for _, refItem := range r {
+				if s, ok := refItem.(string); ok && s != "" {
+					refs = append(refs, s)
+				}
+			}
+		}
+	}
+	if len(refs) > 0 {
+		remediation += " References: " + strings.Join(refs, ", ")
+	}
+
+	f := &modules.Finding{
 		Module:      "nuclei",
 		Title:       fmt.Sprintf("[%s] %s", item.TemplateID, item.Info.Name),
 		Severity:    sev,
@@ -320,10 +373,15 @@ func convertOfficialToFinding(item *OfficialNucleiFinding) *modules.Finding {
 		Payload:     item.TemplateID,
 		Detail:      detail,
 		Evidence:    evidence,
-		Remediation: "Review official CVE / advisory documentation for this template ID and patch affected software.",
+		Remediation: remediation,
 		CWEID:       cweID,
 		CVSS:        cvss,
+		CVSSVector:  cvssVector,
+		RawRequest:  item.Request,
+		RawResponse: item.Response,
 	}
+	f.NormalizeCVSS()
+	return f
 }
 
 // RunSmartNuclei coordinates high-speed execution using the optimal engine.
@@ -432,6 +490,10 @@ func InferTagsFromTech(technologies []string) string {
 			addTag("nginx")
 		case strings.Contains(lower, "iis"):
 			addTag("iis")
+		case strings.Contains(lower, "caddy"):
+			addTag("caddy")
+		case strings.Contains(lower, "litespeed"):
+			addTag("litespeed")
 		case strings.Contains(lower, "php"):
 			addTag("php")
 		case strings.Contains(lower, "wordpress"):
@@ -443,6 +505,8 @@ func InferTagsFromTech(technologies []string) string {
 			addTag("drupal")
 		case strings.Contains(lower, "laravel"):
 			addTag("laravel")
+		case strings.Contains(lower, "symfony"):
+			addTag("symfony")
 		case strings.Contains(lower, "spring"):
 			addTag("spring")
 			addTag("springboot")
@@ -454,10 +518,96 @@ func InferTagsFromTech(technologies []string) string {
 			addTag("grafana")
 		case strings.Contains(lower, "django"):
 			addTag("django")
+		case strings.Contains(lower, "flask"):
+			addTag("flask")
+		case strings.Contains(lower, "fastapi"):
+			addTag("fastapi")
+		case strings.Contains(lower, "rails") || strings.Contains(lower, "ruby"):
+			addTag("rails")
+			addTag("ruby")
+		case strings.Contains(lower, "asp.net") || strings.Contains(lower, "dotnet"):
+			addTag("aspnet")
+			addTag("dotnet")
 		case strings.Contains(lower, "node") || strings.Contains(lower, "express"):
 			addTag("nodejs")
+			addTag("express")
+		case strings.Contains(lower, "next"):
+			addTag("nextjs")
+		case strings.Contains(lower, "react"):
+			addTag("react")
+		case strings.Contains(lower, "vue"):
+			addTag("vue")
+		case strings.Contains(lower, "angular"):
+			addTag("angular")
+		case strings.Contains(lower, "graphql"):
+			addTag("graphql")
+		case strings.Contains(lower, "redis"):
+			addTag("redis")
+		case strings.Contains(lower, "mongo"):
+			addTag("mongodb")
+		case strings.Contains(lower, "mysql"):
+			addTag("mysql")
+		case strings.Contains(lower, "postgres"):
+			addTag("postgres")
+		case strings.Contains(lower, "docker"):
+			addTag("docker")
+		case strings.Contains(lower, "k8s") || strings.Contains(lower, "kube"):
+			addTag("kubernetes")
+		case strings.Contains(lower, "kibana") || strings.Contains(lower, "elastic"):
+			addTag("elasticsearch")
+			addTag("kibana")
+		case strings.Contains(lower, "gitlab"):
+			addTag("gitlab")
+		case strings.Contains(lower, "gitea"):
+			addTag("gitea")
+		case strings.Contains(lower, "keycloak"):
+			addTag("keycloak")
 		}
 	}
 
 	return strings.Join(tags, ",")
+}
+
+// NucleiModule implements the standard modules.Module interface for full scan integration.
+type NucleiModule struct {
+	TemplatesPath string
+	Tags          string
+	Severity      string
+	Concurrency   int
+	TimeoutSec    int
+	CustomArgs    string
+}
+
+func NewNucleiModule() *NucleiModule {
+	return &NucleiModule{
+		Concurrency: 35,
+		TimeoutSec:  10,
+	}
+}
+
+func (m *NucleiModule) Name() string {
+	return "nuclei"
+}
+
+func (m *NucleiModule) Description() string {
+	return "Next-Gen Nuclei Template Vulnerability & Misconfiguration Scanner"
+}
+
+func (m *NucleiModule) Run(target *modules.Target, c *client.Client) ([]*modules.Finding, error) {
+	effectiveTags := m.Tags
+	if effectiveTags == "" && m.TemplatesPath == "" && m.CustomArgs == "" {
+		effectiveTags = "cve,misconfig,exposure"
+	}
+	cfg := NucleiRunnerConfig{
+		TargetURL:     target.URL,
+		TemplatesPath: m.TemplatesPath,
+		Tags:          effectiveTags,
+		Severity:      m.Severity,
+		Concurrency:   m.Concurrency,
+		TimeoutSec:    m.TimeoutSec,
+		CustomArgs:    m.CustomArgs,
+		Headers:       target.Headers,
+		Client:        c,
+	}
+	return RunSmartNuclei(cfg)
 }

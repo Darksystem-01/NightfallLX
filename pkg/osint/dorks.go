@@ -290,7 +290,7 @@ func GenerateDorks(domain string) []GoogleDork {
 			Severity:      tpl.Severity,
 			GHDBSection:   tpl.GHDBSection,
 			GoogleURL:     "https://www.google.com/search?q=" + encodedQuery,
-			DorkSearchURL: "https://dorksearch.com/?q=" + encodedQuery,
+			DorkSearchURL: "https://duckduckgo.com/?q=" + encodedQuery,
 			BingURL:       "https://www.bing.com/search?q=" + encodedQuery,
 			DuckDuckGoURL: "https://duckduckgo.com/?q=" + encodedQuery,
 		})
@@ -341,7 +341,7 @@ func PrintDorksReport(domain string, dorks []GoogleDork) {
 			fmt.Printf("    ├── \033[1;37m[%d] %s\033[0m %s[%s]\033[0m (\033[36m%s\033[0m)\n", i+1, item.Description, sevColor, item.Severity, item.GHDBSection)
 			fmt.Printf("    │   ├── Query      : \033[1;33m%s\033[0m\n", item.Query)
 			fmt.Printf("    │   ├── %s    : \033[34m%s\033[0m\n", makeOSC8Link(item.GoogleURL, "[Google Search]"), item.GoogleURL)
-			fmt.Printf("    │   ├── %s: \033[32m%s\033[0m\n", makeOSC8Link(item.DorkSearchURL, "[DorkSearch]   "), item.DorkSearchURL)
+			fmt.Printf("    │   ├── %s: \033[32m%s\033[0m\n", makeOSC8Link(item.DuckDuckGoURL, "[DuckDuckGo]   "), item.DuckDuckGoURL)
 			fmt.Printf("    │   └── %s       : \033[36m%s\033[0m\n", makeOSC8Link(item.BingURL, "[Bing Search]  "), item.BingURL)
 		}
 		fmt.Println()
@@ -612,7 +612,7 @@ func ExportDorksHTML(domain string, dorks []GoogleDork, outputPath string) error
             </div>
             <div class="btn-group">
                 <a href="` + d.GoogleURL + `" target="_blank" rel="noopener noreferrer" class="btn btn-google">🔍 Google Search</a>
-                <a href="` + d.DorkSearchURL + `" target="_blank" rel="noopener noreferrer" class="btn btn-dorksearch">⚡ DorkSearch</a>
+                <a href="` + d.DuckDuckGoURL + `" target="_blank" rel="noopener noreferrer" class="btn btn-dorksearch">⚡ DuckDuckGo (Instant Dork)</a>
                 <a href="` + d.BingURL + `" target="_blank" rel="noopener noreferrer" class="btn btn-bing">🌐 Bing Search</a>
                 <a href="` + d.DuckDuckGoURL + `" target="_blank" rel="noopener noreferrer" class="btn btn-ddg">🦆 DuckDuckGo</a>
             </div>

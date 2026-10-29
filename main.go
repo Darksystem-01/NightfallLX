@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/url"
 	"nightfalllx/pkg/client"
+	"nightfalllx/pkg/cvss"
 	"nightfalllx/pkg/detector"
 	"nightfalllx/pkg/fuzzer"
 	"nightfalllx/pkg/modules"
@@ -20,7 +21,11 @@ import (
 	"nightfalllx/pkg/sitemap"
 	"nightfalllx/pkg/troubleshoot"
 	"nightfalllx/pkg/tui"
+	"nightfalllx/pkg/webgui"
 	"os"
+	"os/exec"
+	"regexp"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -36,6 +41,65 @@ func (i *arrayFlags) String() string {
 func (i *arrayFlags) Set(value string) error {
 	*i = append(*i, value)
 	return nil
+}
+
+
+func getReportOutputBase(userOutput, domain, rawURL, suffix string) string {
+	cleanName := ""
+	if domain != "" {
+		cleanName = osint.CleanDomain(domain)
+	} else if rawURL != "" {
+		if u, err := url.Parse(rawURL); err == nil && u.Hostname() != "" {
+			cleanName = osint.CleanDomain(u.Hostname())
+		} else {
+			cleanName = osint.CleanDomain(rawURL)
+		}
+	}
+	if cleanName == "" {
+		cleanName = "target"
+	}
+
+	if userOutput != "" && userOutput != "lab_report" {
+		return userOutput
+	}
+
+	if suffix != "" {
+		return fmt.Sprintf("/tmp/%s_%s", cleanName, suffix)
+	}
+	return fmt.Sprintf("/tmp/%s_report", cleanName)
+}
+
+
+func syncToDownloadsIfTmp(htmlPath string) {
+	if strings.HasPrefix(htmlPath, "/tmp/") {
+		if homeDir, err := os.UserHomeDir(); err == nil && homeDir != "" {
+			dlDir := filepath.Join(homeDir, "Downloads")
+			_ = os.MkdirAll(dlDir, 0755)
+			dlPath := filepath.Join(dlDir, filepath.Base(htmlPath))
+			if data, err := os.ReadFile(htmlPath); err == nil {
+				_ = os.WriteFile(dlPath, data, 0644)
+			}
+		}
+	}
+}
+
+func printViewCommand(filePath string) {
+	syncToDownloadsIfTmp(filePath)
+	fmt.Printf("\033[1;32m[+] Interactive HTML Dashboard saved to: %s\033[0m\n", filePath)
+	browserCmd := "brave-browser"
+	if _, err := exec.LookPath("brave-browser"); err != nil {
+		if _, err := exec.LookPath("brave"); err == nil {
+			browserCmd = "brave"
+		} else if _, err := exec.LookPath("google-chrome"); err == nil {
+			browserCmd = "google-chrome"
+		} else if _, err := exec.LookPath("firefox"); err == nil {
+			browserCmd = "firefox"
+		} else {
+			browserCmd = "xdg-open"
+		}
+	}
+	fmt.Printf("\033[1;33m[*] To view the report in your browser, run:\033[0m\n")
+	fmt.Printf("    \033[1;36m%s %s\033[0m\n\n", browserCmd, filePath)
 }
 
 func parseCodes(raw string) map[int]bool {
@@ -119,6 +183,10 @@ func main() {
 		nucleiSeverity string
 		nucleiC        int
 		nucleiEngine   string
+		nucleiArgs     string
+		isAuto         bool
+		isWeb          bool
+		webPort        int
 		matchRegexStr  string
 		filterRegexStr string
 		autoRegex      bool
@@ -128,6 +196,19 @@ func main() {
 		isEmails       bool
 		is403Bypass    bool
 		isGraphQL      bool
+		isJSMiner      bool
+		isTakeover     bool
+		isGitAudit     bool
+		isSmuggling    bool
+		isDNSEnum      bool
+		dnsServer      string
+		dnsThreads     int
+		dnsTimeout     int
+		dnsWordlist    string
+		dnsNoReverse   bool
+		dnsWhois       bool
+		dnsScrap       int
+		dnsSubfile     string
 	)
 
 	// Target & Input
@@ -167,6 +248,28 @@ func main() {
 	flag.BoolVar(&is403Bypass, "bypass", false, "Alias for --bypass-403")
 	flag.BoolVar(&isGraphQL, "graphql", false, "Audit GraphQL instances for exposed introspection, query batching, and schema leaks")
 	flag.BoolVar(&isGraphQL, "api-audit", false, "Alias for --graphql")
+	flag.BoolVar(&isJSMiner, "mine-js", false, "Extract API routes, endpoints, and credentials from discovered JavaScript files")
+	flag.BoolVar(&isJSMiner, "js-links", false, "Alias for --mine-js")
+	flag.BoolVar(&isTakeover, "takeover", false, "Audit subdomains for dangling cloud CNAME DNS takeovers (AWS, GitHub, Heroku, etc.)")
+	flag.BoolVar(&isTakeover, "sub-takeover", false, "Alias for --takeover")
+	flag.BoolVar(&isGitAudit, "dump-git", false, "Audit and inspect exposed .git/ directories and repository metadata")
+	flag.BoolVar(&isGitAudit, "git-audit", false, "Alias for --dump-git")
+	flag.BoolVar(&isSmuggling, "smuggling", false, "Audit HTTP Request Smuggling desync vulnerabilities (CL.TE, TE.CL, TE.TE)")
+	flag.BoolVar(&isSmuggling, "http-smuggle", false, "Alias for --smuggling")
+
+	// Automated DNS Intelligence & Enum Engine (dnsenum)
+	flag.BoolVar(&isDNSEnum, "dnsenum", false, "Run automated DNS enumeration & intelligence (dnsenum integration)")
+	flag.BoolVar(&isDNSEnum, "dns", false, "Alias for --dnsenum")
+	flag.BoolVar(&isDNSEnum, "dns-enum", false, "Alias for --dnsenum")
+	flag.StringVar(&dnsServer, "dns-server", "", "Custom DNS server for queries (e.g. 8.8.8.8)")
+	flag.IntVar(&dnsThreads, "dns-threads", 15, "Number of concurrent threads for DNS queries (default: 15)")
+	flag.IntVar(&dnsTimeout, "dns-timeout", 5, "TCP/UDP timeout for DNS queries in seconds (default: 5)")
+	flag.StringVar(&dnsWordlist, "dns-wordlist", "", "Custom wordlist for subdomain brute force in dnsenum")
+	flag.BoolVar(&dnsNoReverse, "dns-noreverse", true, "Skip reverse lookup operations in dnsenum (default: true)")
+	flag.BoolVar(&dnsWhois, "dns-whois", false, "Perform WHOIS queries on C class network ranges (dnsenum -w)")
+	flag.IntVar(&dnsScrap, "dns-scrap", 0, "Max subdomains to scrape from Google (default: 0)")
+	flag.StringVar(&dnsSubfile, "dns-subfile", "", "Write valid discovered subdomains to this file")
+
 
 	// Vulnerability Assessment Modules
 	flag.StringVar(&moduleList, "m", "all", "Comma-separated modules: sqli, ssti, lfi, cmdi, xss, cors, redirect, ssrf, jwt, waf, idor, csrf, xxe, nosqli, upload, headers, exposure, hostheader, crlf, secrets, race, userenum (or 'all')")
@@ -190,6 +293,12 @@ func main() {
 	flag.StringVar(&nucleiSeverity, "severity", "", "Alias for -sev")
 	flag.IntVar(&nucleiC, "nuclei-c", 35, "Concurrency for Nuclei execution (default: 35)")
 	flag.StringVar(&nucleiEngine, "nuclei-engine", "auto", "Nuclei engine mode: 'auto' (preferred), 'official', or 'internal'")
+	flag.StringVar(&nucleiArgs, "nuclei-args", "", "Additional custom CLI flags passed directly to official Nuclei binary")
+	flag.BoolVar(&isAuto, "auto", false, "Autonomous full-scope scan: Recon, Tech, Crawler, Web Injections, Nuclei & Report")
+	flag.BoolVar(&isWeb, "web", false, "Launch persistent Web Command Center & Generator dashboard (default: http://127.0.0.1:8888)")
+	flag.BoolVar(&isWeb, "gui", false, "Alias for --web")
+	flag.IntVar(&webPort, "web-port", 8888, "Port for Web Command Center dashboard (default: 8888)")
+	flag.BoolVar(&isAuto, "full", false, "Alias for -auto")
 
 	// HTTP Options
 	flag.StringVar(&method, "X", "GET", "HTTP Method: GET, POST, PUT, etc.")
@@ -241,6 +350,8 @@ func main() {
 	// Diagnostics & Version
 	flag.BoolVar(&isDoctor, "doctor", false, "Run diagnostic checks and troubleshooting")
 	flag.BoolVar(&isDoctor, "troubleshoot", false, "Alias for --doctor")
+	var cvssVectorFlag string
+	flag.StringVar(&cvssVectorFlag, "cvss", "", "Calculate and verify official CVSS v3.1 vector string (e.g. -cvss 'CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:N/A:N')")
 	var isVersion bool
 	flag.BoolVar(&isVersion, "version", false, "Show program version")
 	flag.BoolVar(&isVersion, "V", false, "Alias for --version")
@@ -279,9 +390,21 @@ ASSESSMENT, OSINT & RECON:
   -shodan          Run Shodan OSINT reconnaissance (subdomains, ports, CVEs)
   -osint           Comprehensive passive OSINT (crt.sh, DNS, SPF/DMARC, Wayback, GHDB)
   -dorks, -ghdb    Generate Exploit-DB GHDB & DorkSearch intelligence dossier & clickable links
+  -dnsenum, -dns   Automated DNS enumeration (Host A, NS, MX, AXFR zone transfer, Subdomains, Netranges)
+  -dns-server str  Custom DNS server for queries (e.g. 8.8.8.8)
+  -dns-threads int Threads for DNS queries (default: 15)
+  -dns-timeout int Query timeout in seconds (default: 5)
+  -dns-wordlist str Wordlist for subdomain brute-force (default: SecLists 5000 / dns.txt)
+  -dns-whois       Perform WHOIS queries on C class network ranges (-w)
+  -dns-noreverse   Skip reverse lookup operations (default: true)
+  -dns-subfile str Save discovered subdomains to file
   -mine-params     Run automated hidden parameter miner (reflection/diff analysis)
   -shodan-key str  Shodan API Key (optional, reads from SHODAN_API_KEY env)
-  -m string        Modules to run: sqli, ssti, lfi, cmdi, xss, cors, redirect, ssrf, jwt, waf (default: "all")
+  -m string        Modules to run: sqli, ssti, lfi, cmdi, xss, cors, redirect, ssrf, jwt, waf, jsminer, gitdumper, smuggling, graphql, nuclei (default: "all")
+  -mine-js         Extract hidden API routes, endpoints, and secrets from JavaScript (-js-links)
+  -takeover        Audit subdomains for dangling cloud CNAME takeovers (-sub-takeover)
+  -dump-git        Audit exposed .git/ directory and extract repo metadata (-git-audit)
+  -smuggling       Audit HTTP Request Smuggling desync (CL.TE, TE.CL, TE.TE)
 
 HIGH-SPEED FUZZING & VHOSTS (ffuf-style):
   -w string        Wordlist path for directory, parameter, or VHost fuzzing
@@ -295,7 +418,9 @@ HIGH-SPEED FUZZING & VHOSTS (ffuf-style):
   -mr, -fr regex   Match / Filter response body regular expression (e.g. -mr 'admin|success')
   -auto-regex      Infer & apply differential regex filter automatically from baseline canary
 
-INTERACTIVE & DIAGNOSTICS:
+INTERACTIVE & WEB DASHBOARD:
+  -web, -gui       Launch persistent Web Command Center & Generator (http://127.0.0.1:8888)
+  -web-port n      Port for Web Command Center (default: 8888)
   -i, -ui, -tui    Launch interactive mouse-controllable TUI dashboard
   -doctor          Run connectivity, DNS, TLS, and proxy diagnostics
   -version, -V     Show program version
@@ -336,13 +461,76 @@ ADVANCED EXPLOITATION & EXPANSION:
   -tags s          Filter Nuclei templates by tag (e.g. 'cve,misconfig,exposure')
   -sev s           Filter Nuclei templates by severity (e.g. 'critical,high,medium')
   -nuclei-c n      Concurrency for Nuclei execution (default: 35)
-  -nuclei-engine s Engine mode: 'auto' (preferred), 'official', or 'internal' (default: 'auto')`)
+  -nuclei-engine s Engine mode: 'auto' (preferred), 'official', or 'internal' (default: 'auto')
+  -nuclei-args s   Additional raw arguments passed directly to official Nuclei (e.g. '-dast -as')
+  -auto, -full     Autonomous full-scope scan: Recon, Tech, Crawler, Web Injections, Nuclei & Report
+
+CVSS v3.1 SCORING ENGINE:
+  -cvss str        Calculate and verify official CVSS v3.1 vector string (e.g. 'CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:N/A:N')`)
 	}
 
 	flag.Parse()
 
+	if rawURL == "" && len(flag.Args()) > 0 {
+		for _, arg := range flag.Args() {
+			trimmed := strings.TrimSpace(arg)
+			if strings.HasPrefix(trimmed, "http://") || strings.HasPrefix(trimmed, "https://") || strings.Contains(trimmed, ".") || strings.Contains(trimmed, ":") {
+				rawURL = trimmed
+				break
+			}
+		}
+	}
+
+	if rawURL != "" && !strings.HasPrefix(rawURL, "http://") && !strings.HasPrefix(rawURL, "https://") {
+		if isHTTPS {
+			rawURL = "https://" + rawURL
+		} else {
+			rawURL = "http://" + rawURL
+		}
+	}
+
 	if isVersion {
 		fmt.Println("NightfallLX v2.0.0 (Go Edition) - High-Performance Web Assessment & Recon Suite")
+		return
+	}
+
+	// Standalone CVSS v3.1 Calculation & Verification Engine
+	if cvssVectorFlag != "" {
+		res, err := cvss.CalculateVector(cvssVectorFlag)
+		if err != nil {
+			fmt.Printf("\033[31m[!] CVSS v3.1 Calculation Error: %v\033[0m\n", err)
+			os.Exit(1)
+		}
+		var color string
+		switch res.Severity {
+		case "CRITICAL":
+			color = "\033[35m"
+		case "HIGH":
+			color = "\033[31m"
+		case "MEDIUM":
+			color = "\033[33m"
+		case "LOW":
+			color = "\033[34m"
+		default:
+			color = "\033[37m"
+		}
+		fmt.Printf("\n\033[1m=== NightfallLX CVSS v3.1 Scoring Engine ===\033[0m\n")
+		fmt.Printf("  Canonical Vector: \033[36m%s\033[0m\n", res.VectorString)
+		fmt.Printf("  Base Score:       %s\033[1m%.1f\033[0m\n", color, res.BaseScore)
+		fmt.Printf("  Severity Rating:  %s\033[1m%s\033[0m\n", color, res.Severity)
+		fmt.Printf("  Impact Sub-Score: %.4f\n", res.ISS)
+		fmt.Printf("  Impact Score:     %.4f\n", res.Impact)
+		fmt.Printf("  Exploitability:   %.4f\n", res.Exploitability)
+		fmt.Printf("  Specification:    FIRST.ORG CVSS v3.1 Specification Compliant\n\n")
+		return
+	}
+
+	// Web Command Center & Generator Dashboard
+	if isWeb {
+		if err := webgui.StartServer("127.0.0.1", webPort); err != nil {
+			fmt.Printf("\033[31m[!] Web server error: %v\033[0m\n", err)
+			os.Exit(1)
+		}
 		return
 	}
 
@@ -356,7 +544,7 @@ ADVANCED EXPLOITATION & EXPANSION:
 	}
 
 	// If no arguments or target given, show standard usage
-	if len(os.Args) == 1 || (rawURL == "" && rawReqFile == "" && domain == "" && !isDoctor && !isScan && !isOSINT && !isDorks) {
+	if len(os.Args) == 1 || (rawURL == "" && rawReqFile == "" && domain == "" && !isDoctor && !isScan && !isOSINT && !isDorks && !isTakeover && !isDNSEnum && !isAdmin && !isEmails && !isWeb) {
 		flag.Usage()
 		return
 	}
@@ -469,7 +657,7 @@ ADVANCED EXPLOITATION & EXPANSION:
 		rawURL = domain
 	}
 
-	if rawURL == "" && !isScan && !isOSINT && !isDorks && !isNuclei {
+	if rawURL == "" && !isScan && !isOSINT && !isDorks && !isNuclei && !isDNSEnum && !isAdmin && !isEmails && !isTakeover {
 		fmt.Println("\033[1;36mNightfallLX (Go Edition)\033[0m - High-Performance Web Assessment & Fuzzer")
 		fmt.Println("Usage:")
 		fmt.Println("  nightfalllx -i                                               # Launch interactive Mouse-controlled Dashboard")
@@ -619,14 +807,27 @@ ADVANCED EXPLOITATION & EXPANSION:
 			IncludeDorks:  true,
 			CheckAdmin:    true,
 			CheckAXFR:     true,
-			CheckEmails:   true,
-			CheckASN:      true,
+			CheckEmails:     true,
+			CheckASN:        true,
+			CheckDNSEnum:    true,
+			DNSEnumWordlist: dnsWordlist,
 		})
 		if err != nil {
 			fmt.Printf("\033[31m[!] OSINT failed: %v\033[0m\n", err)
 			os.Exit(1)
 		}
 		osint.PrintOSINTReport(rep)
+
+		basePath := getReportOutputBase(output, targetDomain, rawURL, "osint")
+		htmlPath := basePath + ".html"
+		if err := osint.ExportOSINTHTML(rep, htmlPath); err == nil {
+			printViewCommand(htmlPath)
+		}
+		jsonPath := basePath + ".json"
+		if jsonStr, err := osint.ExportOSINTJSON(rep); err == nil {
+			_ = os.WriteFile(jsonPath, []byte(jsonStr), 0644)
+			fmt.Printf("\033[1;32m[+] JSON OSINT Dossier saved to: %s\033[0m\n", jsonPath)
+		}
 		return
 	}
 
@@ -653,17 +854,60 @@ ADVANCED EXPLOITATION & EXPANSION:
 		dorks := osint.GenerateDorks(targetDomain)
 		osint.PrintDorksReport(targetDomain, dorks)
 
-		if output != "" {
-			htmlPath := output + "_dorks.html"
-			if err := osint.ExportDorksHTML(targetDomain, dorks, htmlPath); err == nil {
-				fmt.Printf("\033[1;32m[+] Interactive HTML Dork Dashboard saved to: %s\033[0m\n", htmlPath)
-			}
-			jsonPath := output + "_dorks.json"
-			if jsonStr, err := osint.ExportDorksJSON(dorks); err == nil {
-				_ = os.WriteFile(jsonPath, []byte(jsonStr), 0644)
-				fmt.Printf("\033[1;32m[+] JSON Dork Dossier saved to: %s\033[0m\n", jsonPath)
+		basePath := getReportOutputBase(output, targetDomain, rawURL, "dorks")
+		htmlPath := basePath + ".html"
+		if err := osint.ExportDorksHTML(targetDomain, dorks, htmlPath); err == nil {
+			printViewCommand(htmlPath)
+		}
+		jsonPath := basePath + ".json"
+		if jsonStr, err := osint.ExportDorksJSON(dorks); err == nil {
+			_ = os.WriteFile(jsonPath, []byte(jsonStr), 0644)
+			fmt.Printf("\033[1;32m[+] JSON Dork Dossier saved to: %s\033[0m\n", jsonPath)
+		}
+		return
+	}
+
+
+	// 6c-8. Standalone Automated DNS Intelligence & Enum Engine (dnsenum)
+	if isDNSEnum {
+		targetDomain := domain
+		if targetDomain == "" {
+			if u, err := url.Parse(rawURL); err == nil && u.Hostname() != "" {
+				targetDomain = u.Hostname()
+			} else {
+				targetDomain = rawURL
 			}
 		}
+		targetDomain = osint.CleanDomain(targetDomain)
+		if targetDomain == "" {
+			fmt.Println("\033[31m[!] Please specify a target domain using -domain or -u (e.g. -domain target.com -dnsenum)\033[0m")
+			os.Exit(1)
+		}
+
+		fmt.Printf("\n\033[1;36m[*] Launching Automated DNS Intelligence & Enumeration on:\033[0m %s ...\n", targetDomain)
+		wl := dnsWordlist
+		if wl == "" && wordlist != "" {
+			wl = wordlist
+		}
+
+		res, err := osint.RunDNSEnum(osint.DNSEnumConfig{
+			Domain:       targetDomain,
+			DNSServer:    dnsServer,
+			Wordlist:     wl,
+			Threads:      dnsThreads,
+			TimeoutSec:   dnsTimeout,
+			NoReverse:    dnsNoReverse,
+			Whois:        dnsWhois,
+			ScrapGoogle:  dnsScrap,
+			Subfile:      dnsSubfile,
+			LiveOutput:   true,
+		})
+		if err != nil {
+			fmt.Printf("\033[31m[!] DNS enumeration error: %v\033[0m\n", err)
+			os.Exit(1)
+		}
+
+		osint.PrintDNSEnumReport(res)
 		return
 	}
 
@@ -752,6 +996,133 @@ ADVANCED EXPLOITATION & EXPANSION:
 		fmt.Printf("\n\033[1;35m[*] Launching GraphQL & Modern API Security Auditing on:\033[0m %s ...\n", rawURL)
 		rep := modules.RunGraphQLAudit(rawURL, httpClient)
 		modules.PrintGraphQLReport(rep)
+		if len(rep.Findings) > 0 {
+			var findings []*modules.Finding
+			for i := range rep.Findings {
+				findings = append(findings, &rep.Findings[i])
+			}
+			meta := reporters.ReportMeta{
+				Timestamp: time.Now().UTC(),
+				Duration:  rep.Duration,
+				Version:   "2.0.0",
+				Command:   strings.Join(os.Args, " "),
+			}
+			endpointURL := rep.Endpoint
+			if endpointURL == "" {
+				endpointURL = rawURL
+			}
+			dummyTarget := &modules.Target{URL: endpointURL, Method: "POST"}
+			_ = reporters.WriteJSONReport(dummyTarget, findings, meta, output+".json")
+			_ = reporters.WriteHTMLReport(dummyTarget, findings, meta, output+".html")
+			_ = reporters.WriteMarkdownReport(dummyTarget, findings, output+".md")
+			fmt.Printf("\033[1;32m[+] Reports generated: %s.html | %s.md | %s.json\033[0m\n", output, output, output)
+			fmt.Printf("\033[1;36m[*] View HTML Report in Browser:\033[0m brave-browser %s.html\n\n", output)
+		}
+		return
+	}
+
+	// 6c-8. Standalone JavaScript Endpoint & Secret Miner
+	if isJSMiner {
+		if rawURL == "" {
+			fmt.Println("\033[31m[!] Please specify a target URL using -u (e.g. -u https://target.com -mine-js)\033[0m")
+			os.Exit(1)
+		}
+		httpClient := client.NewClient(proxy, time.Duration(timeoutSec)*time.Second, insecure, cookie, parsedHeaders)
+		fmt.Printf("\n\033[1;36m[*] Launching JavaScript Endpoint & Secret Miner on:\033[0m %s ...\n", rawURL)
+		rep, findings, err := modules.MineJavaScript(rawURL, httpClient)
+		if err != nil {
+			fmt.Printf("\033[31m[!] JS mining failed: %v\033[0m\n", err)
+			os.Exit(1)
+		}
+		modules.PrintJSMinerReport(rep)
+		if len(findings) > 0 && (reportJSON != "" || reportHTML != "" || reportSARIF != "" || output != "lab_report") {
+			meta := reporters.ReportMeta{Timestamp: time.Now().UTC(), Duration: 1 * time.Second, Version: "2.0.0", Command: strings.Join(os.Args, " ")}
+			dummyTarget := &modules.Target{URL: rawURL, Method: "GET"}
+			_ = reporters.WriteJSONReport(dummyTarget, findings, meta, output+".json")
+			_ = reporters.WriteHTMLReport(dummyTarget, findings, meta, output+".html")
+		}
+		return
+	}
+
+	// 6c-9. Standalone Subdomain Takeover Auditor
+	if isTakeover {
+		targetDomain := domain
+		if targetDomain == "" {
+			if u, err := url.Parse(rawURL); err == nil && u.Hostname() != "" {
+				targetDomain = u.Hostname()
+			} else {
+				targetDomain = rawURL
+			}
+		}
+		targetDomain = osint.CleanDomain(targetDomain)
+		if targetDomain == "" {
+			fmt.Println("\033[31m[!] Please specify a target domain using -domain or -u (e.g. -domain target.com -takeover)\033[0m")
+			os.Exit(1)
+		}
+		fmt.Printf("\n\033[1;35m[*] Discovering subdomains and auditing for dangling CNAME takeovers on:\033[0m %s ...\n", targetDomain)
+		subs, err := osint.FetchCertSubdomains(targetDomain, 10*time.Second)
+		if err != nil || len(subs) == 0 {
+			subs = []string{targetDomain}
+		}
+		httpClient := client.NewClient(proxy, time.Duration(timeoutSec)*time.Second, insecure, cookie, parsedHeaders)
+		rep, findings, err := osint.CheckSubdomainTakeovers(subs, httpClient)
+		if err != nil {
+			fmt.Printf("\033[31m[!] Takeover audit failed: %v\033[0m\n", err)
+			os.Exit(1)
+		}
+		osint.PrintTakeoverReport(rep)
+		if len(findings) > 0 && (reportJSON != "" || reportHTML != "" || reportSARIF != "" || output != "lab_report") {
+			meta := reporters.ReportMeta{Timestamp: time.Now().UTC(), Duration: 1 * time.Second, Version: "2.0.0", Command: strings.Join(os.Args, " ")}
+			dummyTarget := &modules.Target{URL: "https://" + targetDomain, Method: "GET"}
+			_ = reporters.WriteJSONReport(dummyTarget, findings, meta, output+".json")
+			_ = reporters.WriteHTMLReport(dummyTarget, findings, meta, output+".html")
+		}
+		return
+	}
+
+	// 6c-10. Standalone Exposed .git/ Repository Auditor
+	if isGitAudit {
+		if rawURL == "" {
+			fmt.Println("\033[31m[!] Please specify a target URL using -u (e.g. -u https://target.com -dump-git)\033[0m")
+			os.Exit(1)
+		}
+		httpClient := client.NewClient(proxy, time.Duration(timeoutSec)*time.Second, insecure, cookie, parsedHeaders)
+		fmt.Printf("\n\033[1;33m[*] Auditing for exposed .git/ directory on:\033[0m %s ...\n", rawURL)
+		rep, findings, err := modules.AuditGitExposure(rawURL, httpClient)
+		if err != nil {
+			fmt.Printf("\033[31m[!] Git audit failed: %v\033[0m\n", err)
+			os.Exit(1)
+		}
+		modules.PrintGitDumpReport(rep)
+		if len(findings) > 0 && (reportJSON != "" || reportHTML != "" || reportSARIF != "" || output != "lab_report") {
+			meta := reporters.ReportMeta{Timestamp: time.Now().UTC(), Duration: 1 * time.Second, Version: "2.0.0", Command: strings.Join(os.Args, " ")}
+			dummyTarget := &modules.Target{URL: rawURL, Method: "GET"}
+			_ = reporters.WriteJSONReport(dummyTarget, findings, meta, output+".json")
+			_ = reporters.WriteHTMLReport(dummyTarget, findings, meta, output+".html")
+		}
+		return
+	}
+
+	// 6c-11. Standalone HTTP Request Smuggling Engine
+	if isSmuggling {
+		if rawURL == "" {
+			fmt.Println("\033[31m[!] Please specify a target URL using -u (e.g. -u https://target.com -smuggling)\033[0m")
+			os.Exit(1)
+		}
+		httpClient := client.NewClient(proxy, time.Duration(timeoutSec)*time.Second, insecure, cookie, parsedHeaders)
+		fmt.Printf("\n\033[1;31m[*] Auditing HTTP Request Smuggling desync vectors on:\033[0m %s ...\n", rawURL)
+		rep, findings, err := modules.AuditHTTPSmuggling(rawURL, httpClient)
+		if err != nil {
+			fmt.Printf("\033[31m[!] Smuggling audit failed: %v\033[0m\n", err)
+			os.Exit(1)
+		}
+		modules.PrintSmuggleReport(rep)
+		if len(findings) > 0 && (reportJSON != "" || reportHTML != "" || reportSARIF != "" || output != "lab_report") {
+			meta := reporters.ReportMeta{Timestamp: time.Now().UTC(), Duration: 1 * time.Second, Version: "2.0.0", Command: strings.Join(os.Args, " ")}
+			dummyTarget := &modules.Target{URL: rawURL, Method: "GET"}
+			_ = reporters.WriteJSONReport(dummyTarget, findings, meta, output+".json")
+			_ = reporters.WriteHTMLReport(dummyTarget, findings, meta, output+".html")
+		}
 		return
 	}
 
@@ -857,6 +1228,7 @@ ADVANCED EXPLOITATION & EXPANSION:
 	}
 
 	// 6g. High-Speed Concurrent Nuclei Vulnerability & Misconfiguration Execution Engine
+	var standaloneNucleiFindings []*modules.Finding
 	if isNuclei || templatesPath != "" {
 		fmt.Println("\n\033[1;36m┌──────────────────────────────────────────────────────────────────────────────────┐\033[0m")
 		fmt.Println("\033[1;36m│\033[0m \033[1;37m⚡ NightfallLX High-Speed Nuclei Vulnerability & Misconfig Engine\033[0m               \033[1;36m│\033[0m")
@@ -871,6 +1243,9 @@ ADVANCED EXPLOITATION & EXPANSION:
 		}
 		if nucleiSeverity != "" {
 			fmt.Printf("\033[1;36m│\033[0m Severity:    \033[1;31m%-67s\033[0m \033[1;36m│\033[0m\n", nucleiSeverity)
+		}
+		if nucleiArgs != "" {
+			fmt.Printf("\033[1;36m│\033[0m Custom Args: \033[1;36m%-67s\033[0m \033[1;36m│\033[0m\n", nucleiArgs)
 		}
 		fmt.Println("\033[1;36m└──────────────────────────────────────────────────────────────────────────────────┘\033[0m")
 
@@ -890,6 +1265,10 @@ ADVANCED EXPLOITATION & EXPANSION:
 					fmt.Printf("\033[1;34m[*] Smart Technology Filtering:\033[0m Detected %s -> Prioritizing tags '%s'\n", strings.Join(techNames, ", "), effectiveTags)
 				}
 			}
+			if effectiveTags == "" && templatesPath == "" && nucleiArgs == "" {
+				effectiveTags = "cve,misconfig,exposure"
+				fmt.Printf("\033[1;34m[*] Default Targeted Tags:\033[0m Applying '%s' for fast high-impact coverage (use -tags all to scan entire library)\n", effectiveTags)
+			}
 		}
 
 		tClient := client.NewClient(proxy, time.Duration(timeoutSec)*time.Second, insecure, cookie, parsedHeaders)
@@ -901,6 +1280,7 @@ ADVANCED EXPLOITATION & EXPANSION:
 			Concurrency:   nucleiC,
 			TimeoutSec:    timeoutSec,
 			Engine:        nucleiEngine,
+			CustomArgs:    nucleiArgs,
 			Proxy:         proxy,
 			Headers:       parsedHeaders,
 			Client:        tClient,
@@ -910,13 +1290,14 @@ ADVANCED EXPLOITATION & EXPANSION:
 		if nErr != nil {
 			fmt.Printf("\033[31m[!] Nuclei execution error: %v\033[0m\n", nErr)
 		} else {
+			standaloneNucleiFindings = nFindings
 			fmt.Printf("\n\033[1;32m[+] Nuclei Scan Finished:\033[0m \033[1m%d\033[0m vulnerability/misconfiguration findings matched.\n\n", len(nFindings))
 		}
 
-		// If user called standalone nuclei mode without standard web assessment, generate reports if requested and return
+		// If user called standalone nuclei mode without standard web assessment, generate reports and return
 		hasFuzz := strings.Contains(rawURL, "FUZZ") || strings.Contains(rawURL, "*") || strings.Contains(data, "FUZZ")
-		if !isScan && !isOSINT && !isDorks && !isAdmin && !isEmails && !is403Bypass && !isGraphQL && !isSiteMap && !isMineParams && !isRace && !hasFuzz {
-			if len(nFindings) > 0 && (reportJSON != "" || reportHTML != "" || reportSARIF != "" || output != "lab_report") {
+		if !isScan && !isOSINT && !isDorks && !isAdmin && !isEmails && !is403Bypass && !isGraphQL && !isSiteMap && !isMineParams && !isRace && !isJSMiner && !isTakeover && !isGitAudit && !isSmuggling && !hasFuzz {
+			if len(nFindings) > 0 {
 				meta := reporters.ReportMeta{
 					Timestamp: time.Now().UTC(),
 					Duration:  1 * time.Second,
@@ -927,12 +1308,13 @@ ADVANCED EXPLOITATION & EXPANSION:
 					URL:    rawURL,
 					Method: "GET",
 				}
-				mdFile := output + ".md"
-				jsonFile := output + ".json"
+				basePath := getReportOutputBase(output, domain, rawURL, "nuclei_report")
+				mdFile := basePath + ".md"
+				jsonFile := basePath + ".json"
 				if reportJSON != "" {
 					jsonFile = reportJSON
 				}
-				htmlFile := output + ".html"
+				htmlFile := basePath + ".html"
 				if reportHTML != "" {
 					htmlFile = reportHTML
 				}
@@ -940,9 +1322,20 @@ ADVANCED EXPLOITATION & EXPANSION:
 				_ = reporters.WriteMarkdownReport(dummyTarget, nFindings, mdFile)
 				_ = reporters.WriteJSONReport(dummyTarget, nFindings, meta, jsonFile)
 				_ = reporters.WriteHTMLReport(dummyTarget, nFindings, meta, htmlFile)
+				saved := []string{
+					fmt.Sprintf("  Markdown: \033[32m%s\033[0m", mdFile),
+					fmt.Sprintf("  JSON:     \033[32m%s\033[0m", jsonFile),
+					fmt.Sprintf("  HTML:     \033[32m%s\033[0m", htmlFile),
+				}
 				if reportSARIF != "" {
 					_ = reporters.WriteSARIFReport(dummyTarget, nFindings, meta, reportSARIF)
+					saved = append(saved, fmt.Sprintf("  SARIF:    \033[32m%s\033[0m", reportSARIF))
 				}
+				fmt.Println(strings.Repeat("=", 60))
+				fmt.Printf("\033[1mNuclei Scan Finished!\033[0m Confirmed Findings: \033[1;32m%d\033[0m\n", len(nFindings))
+				fmt.Printf("Reports saved to:\n%s\n", strings.Join(saved, "\n"))
+				fmt.Println(strings.Repeat("=", 60))
+				printViewCommand(htmlFile)
 			}
 			return
 		}
@@ -1020,6 +1413,18 @@ ADVANCED EXPLOITATION & EXPANSION:
 			queryParams[k] = v[0]
 		}
 	}
+	// RESTful Path Parameter Extraction (e.g. /ticket/4211 or /order/500)
+	restPathRegex := regexp.MustCompile(`(?i)/([a-zA-Z0-9_\-]+)/(\d+)(?:/|$)`)
+	if restMatches := restPathRegex.FindAllStringSubmatch(parsedURL.Path, -1); len(restMatches) > 0 {
+		for _, m := range restMatches {
+			if len(m) >= 3 {
+				rName, rID := m[1], m[2]
+				if _, exists := queryParams[rName]; !exists {
+					queryParams[rName] = rID
+				}
+			}
+		}
+	}
 
 	postData := make(map[string]string)
 	if data != "" {
@@ -1046,6 +1451,27 @@ ADVANCED EXPLOITATION & EXPANSION:
 		}
 	}
 
+	httpClient := client.NewClient(proxy, time.Duration(timeoutSec)*time.Second, insecure, cookie, parsedHeaders)
+
+	// Canonical Redirect Resolution:
+	// Automatically follow initial redirects (e.g. http -> https or / -> /uz) so the scanner tests the real application!
+	if !strings.Contains(rawURL, "FUZZ") {
+		resolvedURL, rErr := httpClient.ResolveRedirect(rawURL, 5)
+		if rErr == nil && resolvedURL != "" && resolvedURL != rawURL {
+			fmt.Printf("\033[1;34m[*] Followed initial redirect to canonical application endpoint:\033[0m %s\n", resolvedURL)
+			rawURL = resolvedURL
+			if pU, err := url.Parse(rawURL); err == nil {
+				parsedURL = pU
+				urlWithoutQuery = fmt.Sprintf("%s://%s%s", parsedURL.Scheme, parsedURL.Host, parsedURL.Path)
+				for k, v := range parsedURL.Query() {
+					if len(v) > 0 {
+						queryParams[k] = v[0]
+					}
+				}
+			}
+		}
+	}
+
 	target := &modules.Target{
 		URL:      urlWithoutQuery,
 		Method:   strings.ToUpper(method),
@@ -1054,9 +1480,9 @@ ADVANCED EXPLOITATION & EXPANSION:
 		Headers:  parsedHeaders,
 		Cookie2:  cookie2,
 		Headers2: parsedHeaders2,
+		Wordlist: wordlist,
 	}
 
-	httpClient := client.NewClient(proxy, time.Duration(timeoutSec)*time.Second, insecure, cookie, parsedHeaders)
 	httpClient.ScopeHosts = scopeHosts
 	httpClient.ScopeOff = scopeOff
 	if rateLimit > 0 {
@@ -1076,6 +1502,66 @@ ADVANCED EXPLOITATION & EXPANSION:
 		detector.PrintReport(techRep)
 	}
 
+	// Automated HTML Form & Parameter Discovery
+	if len(target.Parameters()) == 0 {
+		if pageResp, err := httpClient.Request("GET", target.URL, "", nil); err == nil && pageResp != nil {
+			forms := modules.ExtractFormsFromHTML(target.URL, pageResp.Body)
+			if len(forms) > 0 {
+				form := forms[0]
+				var fieldNames []string
+				for k, v := range form.Fields {
+					target.Params[k] = v
+					target.Data[k] = v
+					fieldNames = append(fieldNames, k)
+				}
+				target.Method = form.Method
+				target.URL = form.Action
+				fmt.Printf("\033[1;32m[+] Discovered HTML Form [%s %s]:\033[0m %v\n", form.Method, form.Action, fieldNames)
+			} else {
+				discoveredParams := modules.ExtractParametersFromHTML(pageResp.Body)
+				if len(discoveredParams) > 0 {
+					fmt.Printf("\033[1;32m[+] Discovered %d Form / URL Parameter(s) from Landing Page:\033[0m %v\n", len(discoveredParams), discoveredParams)
+					for _, p := range discoveredParams {
+						target.Params[p] = "test"
+						target.Data[p] = "test"
+					}
+				}
+			}
+		}
+	}
+
+	if len(target.Parameters()) == 0 {
+		if sp, spErr := sitemap.NewSpider(target.URL, 2, 10); spErr == nil {
+			sm := sp.Crawl()
+			if sm != nil && len(sm.Endpoints) > 0 {
+				for _, ep := range sm.Endpoints {
+					if len(ep.Forms) > 0 {
+						form := ep.Forms[0]
+						for _, inp := range form.Inputs {
+							target.Params[inp] = "test"
+							target.Data[inp] = "test"
+						}
+						target.Method = form.Method
+						if form.Action != "" {
+							target.URL = form.Action
+						}
+						fmt.Printf("\033[1;32m[+] Discovered Form via Crawler [%s %s]:\033[0m %v\n", target.Method, target.URL, form.Inputs)
+						break
+					}
+					if len(ep.Parameters) > 0 {
+						for _, p := range ep.Parameters {
+							target.Params[p] = "test"
+							target.Data[p] = "test"
+						}
+						target.URL = ep.URL
+						fmt.Printf("\033[1;32m[+] Discovered Parameters via Crawler [%s]:\033[0m %v\n", target.URL, ep.Parameters)
+						break
+					}
+				}
+			}
+		}
+	}
+
 	fmt.Printf("\n\033[1;36mNightfallLX (Go Edition)\033[0m - Web Assessment Framework\n")
 	fmt.Printf("Target:     \033[1m%s\033[0m [%s]\n", target.URL, target.Method)
 	fmt.Printf("Parameters: %v\n", target.Parameters())
@@ -1085,11 +1571,31 @@ ADVANCED EXPLOITATION & EXPANSION:
 	fmt.Println()
 
 	if len(target.Parameters()) == 0 {
-		fmt.Println("\033[33m[!] Notice: No query or body parameters detected in target URL.\033[0m")
-		fmt.Println("    Running passive / host modules (WAF, Headers, Exposure, CORS). To test injection, add parameters: -u 'http://site/?id=1' or -d 'param=1'")
+		fmt.Println("[33m[!] Notice: No query or body parameters detected in target URL or landing page forms.[0m")
+		fmt.Println("    Running passive / host modules (WAF, Headers, Exposure, CORS, Secrets, JSMiner, GitDumper, Smuggling).")
+		fmt.Println("    To test injection with specific parameters, specify: -u 'http://site/?id=1' or -d 'param=1'")
 	}
 
+	nucleiMod := nuclei_engine.NewNucleiModule()
+	nucleiMod.TemplatesPath = templatesPath
+	nucleiMod.Tags = templateTags
+	if nucleiMod.Tags == "" && techRep != nil && len(techRep.Technologies) > 0 {
+		var techNames []string
+		for _, t := range techRep.Technologies {
+			techNames = append(techNames, t.Name)
+		}
+		inferred := nuclei_engine.InferTagsFromTech(techNames)
+		if inferred != "" {
+			nucleiMod.Tags = inferred + ",misconfig,exposure"
+		}
+	}
+	nucleiMod.Severity = nucleiSeverity
+	nucleiMod.Concurrency = nucleiC
+	nucleiMod.TimeoutSec = timeoutSec
+	nucleiMod.CustomArgs = nucleiArgs
+
 	availableModules := map[string]modules.Module{
+		"nuclei":     nucleiMod,
 		"sqli":       modules.NewSQLiModule(),
 		"ssti":       modules.NewSSTIModule(),
 		"lfi":        modules.NewLFIModule(),
@@ -1112,6 +1618,10 @@ ADVANCED EXPLOITATION & EXPANSION:
 		"secrets":    secrets.NewModule(),
 		"race":       race.NewModule(),
 		"userenum":   modules.NewUserEnumModule(),
+		"jsminer":    modules.NewJSMinerModule(),
+		"gitdumper":  modules.NewGitDumperModule(),
+		"smuggling":  modules.NewSmugglingModule(),
+		"graphql":    modules.NewGraphQLModule(),
 	}
 
 	var activeModules []modules.Module
@@ -1119,7 +1629,7 @@ ADVANCED EXPLOITATION & EXPANSION:
 		order := []string{
 			"waf", "headers", "exposure", "secrets", "sqli", "ssti", "lfi", "cmdi",
 			"xss", "cors", "redirect", "ssrf", "jwt", "idor", "csrf",
-			"xxe", "nosqli", "upload", "hostheader", "crlf", "race", "userenum",
+			"xxe", "nosqli", "upload", "hostheader", "crlf", "race", "userenum", "jsminer", "gitdumper", "smuggling", "graphql", "nuclei",
 		}
 		for _, name := range order {
 			activeModules = append(activeModules, availableModules[name])
@@ -1133,7 +1643,17 @@ ADVANCED EXPLOITATION & EXPANSION:
 		}
 	}
 
+	// Pre-flight host reachability check
+	checkResp, checkErr := httpClient.Request("GET", target.URL, "", nil)
+	if checkErr != nil && checkResp == nil {
+		fmt.Printf("\n\033[1;31m[!] TARGET OFFLINE / UNREACHABLE: Cannot connect to %s (%v)\033[0m\n", target.URL, checkErr)
+		fmt.Printf("\033[33m[*] Please verify the lab machine / Docker container is running and IP is reachable.\033[0m\n\n")
+	}
+
 	var allFindings []*modules.Finding
+	if len(standaloneNucleiFindings) > 0 {
+		allFindings = append(allFindings, standaloneNucleiFindings...)
+	}
 	scanStart := time.Now()
 	for _, mod := range activeModules {
 		fmt.Printf("\033[36m[*] Running module: \033[1m%-10s\033[0m (%s) ...\n", mod.Name(), mod.Description())
@@ -1143,11 +1663,29 @@ ADVANCED EXPLOITATION & EXPANSION:
 			continue
 		}
 		for _, f := range findings {
+			f.AlignSeverityToCVSS()
 			status := "\033[1;32m[CONFIRMED]\033[0m"
 			if f.Severity == modules.SeverityInfo {
 				status = "\033[1;36m[INFO]\033[0m"
 			}
-			fmt.Printf("    %s \033[1m%s\033[0m (param=%s, confidence=%d%%)\n", status, f.Title, f.Parameter, f.Confidence)
+			cvssInfo := ""
+			if f.CVSS > 0 {
+				var sevColor string
+				switch f.Severity {
+				case modules.SeverityCritical:
+					sevColor = "\033[1;35m"
+				case modules.SeverityHigh:
+					sevColor = "\033[1;31m"
+				case modules.SeverityMedium:
+					sevColor = "\033[1;33m"
+				case modules.SeverityLow:
+					sevColor = "\033[1;34m"
+				default:
+					sevColor = "\033[1;36m"
+				}
+				cvssInfo = fmt.Sprintf(" | %sCVSS %.1f %s\033[0m", sevColor, f.CVSS, f.Severity)
+			}
+			fmt.Printf("    %s \033[1m%s\033[0m (param=%s, confidence=%d%%%s)\n", status, f.Title, f.Parameter, f.Confidence, cvssInfo)
 		}
 		allFindings = append(allFindings, findings...)
 	}
@@ -1159,12 +1697,13 @@ ADVANCED EXPLOITATION & EXPANSION:
 		Command:   strings.Join(os.Args, " "),
 	}
 
-	mdFile := output + ".md"
-	jsonFile := output + ".json"
+	basePath := getReportOutputBase(output, domain, rawURL, "report")
+	mdFile := basePath + ".md"
+	jsonFile := basePath + ".json"
 	if reportJSON != "" {
 		jsonFile = reportJSON
 	}
-	htmlFile := output + ".html"
+	htmlFile := basePath + ".html"
 	if reportHTML != "" {
 		htmlFile = reportHTML
 	}
@@ -1194,4 +1733,5 @@ ADVANCED EXPLOITATION & EXPANSION:
 	fmt.Printf("\033[1mScan Finished!\033[0m Confirmed Vulnerabilities: \033[1;32m%d\033[0m\n", len(allFindings))
 	fmt.Printf("Reports saved to:\n%s\n", strings.Join(saved, "\n"))
 	fmt.Println(strings.Repeat("=", 60))
+	printViewCommand(htmlFile)
 }

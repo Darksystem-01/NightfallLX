@@ -13,6 +13,20 @@ reports/
 *.pem
 *.key
 
+# Engagement & Target-Specific Assessment files (MegacorpOne, audit logs, client reports)
+pkg/megacorpone_*
+pkg/assessment/
+*.audit.log
+*.review_package.md
+*.changelog.md
+*.changelog.bak.md
+
+# Scratch verification scripts
+cvss31.py
+pkg/cvss31.py
+pkg/first_official_cvsscalc31.js
+pkg/verify_official_cvss.js
+
 # Python
 __pycache__/
 *.py[cod]

@@ -2,6 +2,7 @@ package modules
 
 import (
 	"fmt"
+	"net/url"
 	"nightfalllx/pkg/client"
 	"strings"
 )
@@ -23,13 +24,26 @@ func (m *CORSModule) Description() string {
 func (m *CORSModule) Run(target *Target, c *client.Client) ([]*Finding, error) {
 	var findings []*Finding
 
+	parsedU, _ := url.Parse(target.URL)
+	targetHost := target.URL
+	scheme := "https"
+	hostname := "target.lab"
+	if parsedU != nil && hostname != "" {
+		if parsedU.Scheme != "" {
+			scheme = parsedU.Scheme
+		}
+		hostname = hostname
+		targetHost = fmt.Sprintf("%s://%s.attacker.lab", scheme, hostname)
+	}
+
 	testOrigins := []struct {
 		Label  string
 		Origin string
 	}{
 		{"Arbitrary Origin", "https://attacker-nightfall.lab"},
 		{"Null Origin", "null"},
-		{"Pre-domain Bypass", target.URL + ".attacker.lab"},
+		{"Pre-domain Bypass", targetHost},
+		{"Subdomain Bypass", fmt.Sprintf("%s://attacker.%s", scheme, hostname)},
 	}
 
 	for _, item := range testOrigins {

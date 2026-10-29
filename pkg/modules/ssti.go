@@ -30,12 +30,17 @@ type sstiEngine struct {
 
 var sstiEngines = []sstiEngine{
 	{"Jinja2/Python", "{{7*7}}", "{{7*8}}", "49", "56"},
+	{"Jinja2/Python (Spaced)", "{{ 7*7 }}", "{{ 7*8 }}", "49", "56"},
+	{"Jinja2/Python (Large)", "{{1337*7}}", "{{1337*9}}", "9359", "12033"},
 	{"Twig/PHP", "{{7*'7'}}", "{{7*'8'}}", "49", "56"},
+	{"Twig/PHP (Spaced)", "{{ 7*'7' }}", "{{ 7*'8' }}", "49", "56"},
 	{"Smarty/PHP", "{7*7}", "{7*8}", "49", "56"},
 	{"Freemarker/Java", "${7*7}", "${7*8}", "49", "56"},
 	{"SpringEL/Java", "*{7*7}", "*{7*8}", "49", "56"},
 	{"ERB/Ruby", "<%= 7*7 %>", "<%= 7*8 %>", "49", "56"},
 	{"Ruby/Inline", "#{7*7}", "#{7*8}", "49", "56"},
+	{"Node EJS", "<%= 7*7 %>", "<%= 7*8 %>", "49", "56"},
+	{"Tornado/Mako", "${7*7}", "${7*8}", "49", "56"},
 }
 
 func (m *SSTIModule) Run(target *Target, c *client.Client) ([]*Finding, error) {
@@ -56,7 +61,7 @@ func (m *SSTIModule) Run(target *Target, c *client.Client) ([]*Finding, error) {
 		} else {
 			baseResp, err = c.Request("GET", target.BuildURLWithParam(param, origVal), "", nil)
 		}
-		if err != nil {
+		if err != nil || baseResp == nil {
 			continue
 		}
 
@@ -73,7 +78,7 @@ func (m *SSTIModule) Run(target *Target, c *client.Client) ([]*Finding, error) {
 			} else {
 				resp1, err = c.Request("GET", target.BuildURLWithParam(param, eng.First), "", nil)
 			}
-			if err != nil || !strings.Contains(resp1.Body, eng.Expect1) {
+			if err != nil || resp1 == nil || !strings.Contains(resp1.Body, eng.Expect1) {
 				continue
 			}
 
@@ -84,14 +89,14 @@ func (m *SSTIModule) Run(target *Target, c *client.Client) ([]*Finding, error) {
 			} else {
 				resp2, err = c.Request("GET", target.BuildURLWithParam(param, eng.Second), "", nil)
 			}
-			if err != nil || !strings.Contains(resp2.Body, eng.Expect2) {
+			if err != nil || resp2 == nil || !strings.Contains(resp2.Body, eng.Expect2) {
 				continue
 			}
 
 			findings = append(findings, &Finding{
 				Module:      m.Name(),
 				Title:       fmt.Sprintf("Server-Side Template Injection (%s)", eng.Name),
-				Severity:    SeverityHigh,
+				Severity:    SeverityCritical,
 				Confidence:  100,
 				URL:         target.URL,
 				Parameter:   param,

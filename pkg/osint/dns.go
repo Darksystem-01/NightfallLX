@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"os/exec"
 	"strings"
 	"time"
 )
@@ -59,22 +60,51 @@ func AuditDNS(domain string, timeout time.Duration) (*OSINTReport, error) {
 		}
 	}
 
-	// 3. Resolve MX records
-	if mxRecords, err := resolver.LookupMX(ctx, domain); err == nil {
+	// 3. Resolve MX records with IP resolution and dig fallback
+	if mxRecords, err := resolver.LookupMX(ctx, domain); err == nil && len(mxRecords) > 0 {
 		for _, mx := range mxRecords {
-			report.MailServers = append(report.MailServers, fmt.Sprintf("%s (Pref: %d)", strings.TrimSuffix(mx.Host, "."), mx.Pref))
+			h := strings.TrimSuffix(mx.Host, ".")
+			ipStr := ""
+			if ips, err := resolver.LookupHost(ctx, h); err == nil && len(ips) > 0 {
+				ipStr = " -> " + ips[0]
+			}
+			report.MailServers = append(report.MailServers, fmt.Sprintf("%s (Pref: %d)%s", h, mx.Pref, ipStr))
 		}
-	}
-
-	// 4. Resolve TXT records & Audit SPF
-	if txts, err := resolver.LookupTXT(ctx, domain); err == nil {
-		for _, txt := range txts {
-			if strings.HasPrefix(strings.ToLower(txt), "v=spf1") {
-				report.SPFRecord = txt
-				break
+	} else {
+		// Fallback MX query via dig
+		cmd := exec.CommandContext(ctx, "dig", "+noall", "+answer", domain, "MX")
+		if out, err := cmd.Output(); err == nil && len(out) > 0 {
+			for _, l := range strings.Split(string(out), "\n") {
+				parts := strings.Fields(l)
+				if len(parts) >= 6 && parts[3] == "MX" {
+					pref := parts[4]
+					h := strings.TrimSuffix(parts[5], ".")
+					ipStr := ""
+					if ips, err := resolver.LookupHost(ctx, h); err == nil && len(ips) > 0 {
+						ipStr = " -> " + ips[0]
+					}
+					report.MailServers = append(report.MailServers, fmt.Sprintf("%s (Pref: %s)%s", h, pref, ipStr))
+				}
 			}
 		}
 	}
+
+	// 4. Resolve Authoritative TXT records & Audit SPF
+	if txts, err := resolver.LookupTXT(ctx, domain); err == nil && len(txts) > 0 {
+		report.TXTRecords = txts
+	}
+	if len(report.TXTRecords) == 0 {
+		report.TXTRecords = LookupTXTRecords(domain, timeout)
+	}
+	for _, txt := range report.TXTRecords {
+		if strings.HasPrefix(strings.ToLower(txt), "v=spf1") {
+			report.SPFRecord = txt
+			break
+		}
+	}
+
+	// 4b. Query Start of Authority (SOA) Record
+	report.SOARecord = LookupSOA(domain, timeout)
 
 	if report.SPFRecord == "" {
 		report.Findings = append(report.Findings, OSINTFinding{

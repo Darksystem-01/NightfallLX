@@ -1,0 +1,1191 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>NightfallLX Web Command Center</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;600&family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg-base: #080c14;
+      --bg-card: rgba(15, 23, 42, 0.75);
+      --bg-card-hover: rgba(30, 41, 59, 0.85);
+      --bg-input: #0f172a;
+      --border-color: rgba(56, 189, 248, 0.18);
+      --border-glow: rgba(56, 189, 248, 0.4);
+      --accent-cyan: #06b6d4;
+      --accent-blue: #38bdf8;
+      --accent-purple: #a855f7;
+      --accent-emerald: #10b981;
+      --accent-rose: #f43f5e;
+      --accent-amber: #f59e0b;
+      --text-main: #f8fafc;
+      --text-muted: #94a3b8;
+      --text-dim: #64748b;
+      --radius: 12px;
+      --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      --font-mono: "Fira Code", ui-monospace, SFMono-Regular, Menlo, monospace;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      background-color: var(--bg-base);
+      background-image: 
+        radial-gradient(at 0% 0%, rgba(6, 182, 212, 0.08) 0px, transparent 50%),
+        radial-gradient(at 100% 0%, rgba(168, 85, 247, 0.08) 0px, transparent 50%),
+        radial-gradient(at 50% 100%, rgba(16, 185, 129, 0.05) 0px, transparent 50%);
+      background-attachment: fixed;
+      color: var(--text-main);
+      font-family: var(--font-sans);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* Top Nav */
+    header {
+      background: rgba(11, 17, 33, 0.85);
+      backdrop-filter: blur(16px);
+      border-bottom: 1px solid var(--border-color);
+      padding: 14px 28px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      position: sticky;
+      top: 0;
+      z-index: 100;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .logo-badge {
+      background: linear-gradient(135deg, var(--accent-cyan), var(--accent-purple));
+      color: #000;
+      font-weight: 900;
+      font-size: 16px;
+      width: 36px;
+      height: 36px;
+      border-radius: 9px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      box-shadow: 0 0 16px rgba(6, 182, 212, 0.4);
+    }
+
+    .brand-title {
+      font-size: 19px;
+      font-weight: 800;
+      letter-spacing: -0.5px;
+      background: linear-gradient(90deg, #ffffff, var(--accent-blue));
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    .brand-subtitle {
+      font-size: 11px;
+      color: var(--accent-cyan);
+      text-transform: uppercase;
+      letter-spacing: 1.5px;
+      font-weight: 600;
+    }
+
+    .header-status {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+    }
+
+    .status-pill {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      background: rgba(16, 185, 129, 0.12);
+      border: 1px solid rgba(16, 185, 129, 0.3);
+      color: var(--accent-emerald);
+      padding: 6px 14px;
+      border-radius: 20px;
+      font-size: 12px;
+      font-weight: 600;
+    }
+
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--accent-emerald);
+      box-shadow: 0 0 10px var(--accent-emerald);
+      animation: pulse 2s infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.4; transform: scale(0.85); }
+    }
+
+    /* Main Container */
+    main {
+      flex: 1;
+      max-width: 1560px;
+      width: 100%;
+      margin: 0 auto;
+      padding: 24px;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 24px;
+    }
+
+    @media (max-width: 1150px) {
+      main {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    /* Cards */
+    .card {
+      background: var(--bg-card);
+      backdrop-filter: blur(12px);
+      border: 1px solid var(--border-color);
+      border-radius: var(--radius);
+      padding: 22px;
+      margin-bottom: 20px;
+      box-shadow: 0 8px 30px rgba(0, 0, 0, 0.35);
+      transition: border-color 0.2s ease;
+    }
+
+    .card:hover {
+      border-color: var(--border-glow);
+    }
+
+    .card-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 16px;
+    }
+
+    .card-title {
+      font-size: 15px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.8px;
+      color: var(--accent-blue);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    /* Input Field */
+    .target-wrapper {
+      position: relative;
+    }
+
+    .target-input {
+      width: 100%;
+      background: var(--bg-input);
+      border: 1.5px solid var(--border-color);
+      border-radius: 10px;
+      color: #fff;
+      font-family: var(--font-mono);
+      font-size: 16px;
+      padding: 14px 16px;
+      outline: none;
+      transition: all 0.2s;
+    }
+
+    .target-input:focus {
+      border-color: var(--accent-cyan);
+      box-shadow: 0 0 16px rgba(6, 182, 212, 0.25);
+    }
+
+    .target-detect-badge {
+      position: absolute;
+      right: 12px;
+      top: 50%;
+      transform: translateY(-50%);
+      font-size: 11px;
+      font-weight: 700;
+      padding: 4px 10px;
+      border-radius: 6px;
+      background: rgba(6, 182, 212, 0.15);
+      border: 1px solid rgba(6, 182, 212, 0.3);
+      color: var(--accent-cyan);
+    }
+
+    /* Quick Target Pills */
+    .quick-targets {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 10px;
+    }
+
+    .quick-target-pill {
+      background: rgba(30, 41, 59, 0.6);
+      border: 1px solid rgba(148, 163, 184, 0.15);
+      color: var(--text-muted);
+      font-family: var(--font-mono);
+      font-size: 12px;
+      padding: 4px 10px;
+      border-radius: 6px;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+
+    .quick-target-pill:hover {
+      background: rgba(56, 189, 248, 0.15);
+      border-color: var(--accent-blue);
+      color: #fff;
+    }
+
+    /* Presets Grid */
+    .presets-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 10px;
+    }
+
+    .preset-card {
+      background: rgba(15, 23, 42, 0.6);
+      border: 1.5px solid rgba(56, 189, 248, 0.15);
+      border-radius: 9px;
+      padding: 12px;
+      cursor: pointer;
+      transition: all 0.2s;
+      text-align: left;
+    }
+
+    .preset-card:hover {
+      background: rgba(30, 41, 59, 0.8);
+      border-color: var(--accent-cyan);
+      transform: translateY(-2px);
+    }
+
+    .preset-card.active {
+      background: linear-gradient(135deg, rgba(6, 182, 212, 0.18), rgba(168, 85, 247, 0.18));
+      border-color: var(--accent-cyan);
+      box-shadow: 0 0 14px rgba(6, 182, 212, 0.25);
+    }
+
+    .preset-title {
+      font-size: 13px;
+      font-weight: 700;
+      color: #fff;
+      margin-bottom: 4px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .preset-desc {
+      font-size: 11px;
+      color: var(--text-muted);
+      line-height: 1.3;
+    }
+
+    /* Modules Grid */
+    .module-category {
+      margin-bottom: 14px;
+    }
+
+    .category-label {
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      color: var(--accent-purple);
+      font-weight: 700;
+      margin-bottom: 8px;
+    }
+
+    .chip-grid {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+
+    .chip {
+      background: rgba(30, 41, 59, 0.5);
+      border: 1px solid rgba(148, 163, 184, 0.2);
+      color: var(--text-muted);
+      font-size: 12px;
+      font-weight: 600;
+      padding: 6px 12px;
+      border-radius: 6px;
+      cursor: pointer;
+      user-select: none;
+      transition: all 0.15s;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .chip:hover {
+      border-color: var(--accent-blue);
+      color: #fff;
+    }
+
+    .chip.active {
+      background: rgba(6, 182, 212, 0.15);
+      border-color: var(--accent-cyan);
+      color: #fff;
+      box-shadow: 0 0 10px rgba(6, 182, 212, 0.2);
+    }
+
+    /* Nuclei Box */
+    .nuclei-box {
+      background: rgba(20, 10, 30, 0.4);
+      border: 1px solid rgba(168, 85, 247, 0.3);
+      border-radius: 10px;
+      padding: 14px;
+      margin-top: 10px;
+    }
+
+    .slider-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-top: 10px;
+      font-size: 12px;
+      color: var(--text-muted);
+    }
+
+    .slider {
+      width: 60%;
+      accent-color: var(--accent-purple);
+    }
+
+    /* Command Generator Box */
+    .cmd-terminal {
+      background: #030712;
+      border: 1.5px solid rgba(56, 189, 248, 0.3);
+      border-radius: var(--radius);
+      padding: 18px;
+      position: relative;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+    }
+
+    .cmd-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 12px;
+      padding-bottom: 8px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    }
+
+    .terminal-dots {
+      display: flex;
+      gap: 6px;
+    }
+
+    .t-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+    }
+
+    .t-red { background: #ef4444; }
+    .t-yellow { background: #f59e0b; }
+    .t-green { background: #10b981; }
+
+    .cmd-box {
+      font-family: var(--font-mono);
+      font-size: 14px;
+      color: #38bdf8;
+      background: #0b1120;
+      padding: 14px 16px;
+      border-radius: 8px;
+      border: 1px solid rgba(56, 189, 248, 0.15);
+      line-height: 1.5;
+      overflow-x: auto;
+      white-space: pre-wrap;
+      word-break: break-all;
+      user-select: all;
+    }
+
+    .cmd-token-tool { color: #f43f5e; font-weight: bold; }
+    .cmd-token-target { color: #34d399; font-weight: bold; }
+    .cmd-token-flag { color: #fbbf24; }
+    .cmd-token-val { color: #38bdf8; }
+
+    /* Action Buttons */
+    .btn-row {
+      display: flex;
+      gap: 12px;
+      margin-top: 14px;
+    }
+
+    .btn {
+      flex: 1;
+      padding: 12px 18px;
+      border-radius: 8px;
+      font-size: 14px;
+      font-weight: 700;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      transition: all 0.2s;
+      border: none;
+    }
+
+    .btn-copy {
+      background: rgba(30, 41, 59, 0.8);
+      border: 1px solid var(--border-color);
+      color: #fff;
+    }
+
+    .btn-copy:hover {
+      background: rgba(56, 189, 248, 0.2);
+      border-color: var(--accent-cyan);
+    }
+
+    .btn-run {
+      background: linear-gradient(135deg, #0284c7, #0891b2);
+      color: #fff;
+      box-shadow: 0 4px 16px rgba(6, 182, 212, 0.35);
+    }
+
+    .btn-run:hover {
+      background: linear-gradient(135deg, #0ea5e9, #06b6d4);
+      transform: translateY(-2px);
+      box-shadow: 0 6px 22px rgba(6, 182, 212, 0.5);
+    }
+
+    .btn-stop {
+      background: rgba(239, 68, 68, 0.2);
+      border: 1px solid rgba(239, 68, 68, 0.4);
+      color: #fca5a5;
+    }
+
+    .btn-stop:hover {
+      background: rgba(239, 68, 68, 0.4);
+    }
+
+    .btn-report {
+      background: linear-gradient(135deg, #059669, #10b981);
+      color: #fff;
+      box-shadow: 0 4px 16px rgba(16, 185, 129, 0.3);
+    }
+
+    .btn-report:hover {
+      background: linear-gradient(135deg, #10b981, #34d399);
+      transform: translateY(-2px);
+    }
+
+    /* Live Output Box */
+    .output-box {
+      background: #020617;
+      border: 1px solid rgba(56, 189, 248, 0.2);
+      border-radius: var(--radius);
+      padding: 14px;
+      font-family: var(--font-mono);
+      font-size: 12px;
+      color: #e2e8f0;
+      min-height: 280px;
+      max-height: 480px;
+      overflow-y: auto;
+      white-space: pre-wrap;
+      word-break: break-all;
+      margin-top: 14px;
+      line-height: 1.45;
+    }
+
+    .output-placeholder {
+      color: var(--text-dim);
+      text-align: center;
+      padding: 80px 20px;
+    }
+
+    /* Form Controls */
+    .text-input {
+      width: 100%;
+      background: var(--bg-input);
+      border: 1px solid var(--border-color);
+      border-radius: 6px;
+      color: #fff;
+      font-family: var(--font-mono);
+      font-size: 13px;
+      padding: 8px 12px;
+      outline: none;
+      margin-top: 6px;
+    }
+
+    .text-input:focus {
+      border-color: var(--accent-cyan);
+    }
+
+    .toggle-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 8px 0;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+      font-size: 13px;
+    }
+
+    .switch {
+      position: relative;
+      display: inline-block;
+      width: 40px;
+      height: 22px;
+    }
+
+    .switch input { opacity: 0; width: 0; height: 0; }
+
+    .slider-toggle {
+      position: absolute;
+      cursor: pointer;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background-color: #334155;
+      transition: .3s;
+      border-radius: 22px;
+    }
+
+    .slider-toggle:before {
+      position: absolute;
+      content: "";
+      height: 16px;
+      width: 16px;
+      left: 3px;
+      bottom: 3px;
+      background-color: white;
+      transition: .3s;
+      border-radius: 50%;
+    }
+
+    input:checked + .slider-toggle {
+      background-color: var(--accent-cyan);
+    }
+
+    input:checked + .slider-toggle:before {
+      transform: translateX(18px);
+    }
+
+    /* Toast Notification */
+    #toast {
+      position: fixed;
+      bottom: 24px;
+      right: 24px;
+      background: rgba(15, 23, 42, 0.95);
+      border: 1px solid var(--accent-cyan);
+      box-shadow: 0 8px 24px rgba(6, 182, 212, 0.35);
+      color: #fff;
+      padding: 12px 20px;
+      border-radius: 8px;
+      font-size: 14px;
+      font-weight: 600;
+      display: none;
+      align-items: center;
+      gap: 10px;
+      z-index: 1000;
+      animation: slideIn 0.25s ease-out;
+    }
+
+    @keyframes slideIn {
+      from { transform: translateY(20px); opacity: 0; }
+      to { transform: translateY(0); opacity: 1; }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Top Navigation -->
+  <header>
+    <div class="brand">
+      <div class="logo-badge">NL</div>
+      <div>
+        <div class="brand-title">NightfallLX Command Center</div>
+        <div class="brand-subtitle">Web Penetration Testing Suite & Generator</div>
+      </div>
+    </div>
+    <div class="header-status">
+      <div class="status-pill">
+        <span class="status-dot"></span>
+        <span>DAEMON ONLINE (PORT 8888)</span>
+      </div>
+    </div>
+  </header>
+
+  <!-- Main Grid -->
+  <main>
+    <!-- Left Column: Controls & Configuration -->
+    <section>
+      <!-- Target Card -->
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title">🎯 1. Target Specification</div>
+        </div>
+        <div class="target-wrapper">
+          <input type="text" id="targetInput" class="target-input" placeholder="Enter IP or Domain (e.g. 10.15.1.29 or app.discover.hard)" value="http://app.discover.hard" autocomplete="off" />
+          <div id="targetDetectBadge" class="target-detect-badge">HTTP URL</div>
+        </div>
+        <div class="quick-targets">
+          <span style="font-size: 11px; color: var(--text-dim); margin-right: 4px; align-self: center;">Quick targets:</span>
+          <div class="quick-target-pill" onclick="setTarget('http://app.discover.hard')">app.discover.hard</div>
+          <div class="quick-target-pill" onclick="setTarget('10.15.1.29')">10.15.1.29</div>
+          <div class="quick-target-pill" onclick="setTarget('monitor.discover.hard')">monitor.discover.hard</div>
+          <div class="quick-target-pill" onclick="setTarget('http://127.0.0.1:8000')">127.0.0.1:8000</div>
+        </div>
+      </div>
+
+      <!-- Preset Scan Strategy -->
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title">⚡ 2. Quick Strategy Presets</div>
+        </div>
+        <div class="presets-grid">
+          <div class="preset-card active" id="preset-auto" onclick="applyPreset('auto')">
+            <div class="preset-title">🚀 Full Autonomous</div>
+            <div class="preset-desc">Recon, Smart Crawler, All Web Injections, Nuclei & Report.</div>
+          </div>
+          <div class="preset-card" id="preset-nuclei" onclick="applyPreset('nuclei')">
+            <div class="preset-title">⚡ Monster Nuclei</div>
+            <div class="preset-desc">13,000+ templates with targeted CVE & Misconfiguration tags.</div>
+          </div>
+          <div class="preset-card" id="preset-critical" onclick="applyPreset('critical')">
+            <div class="preset-title">🔥 Critical Exploit Focus</div>
+            <div class="preset-desc">SQLi, CMDi, LFI, SSRF, XXE and Critical Nuclei templates.</div>
+          </div>
+          <div class="preset-card" id="preset-graphql" onclick="applyPreset('graphql')">
+            <div class="preset-title">🕸️ API & GraphQL</div>
+            <div class="preset-desc">Introspection, batching, schema extraction, and Param Miner.</div>
+          </div>
+          <div class="preset-card" id="preset-recon" onclick="applyPreset('recon')">
+            <div class="preset-title">🔍 Recon & Ports</div>
+            <div class="preset-desc">Fast TCP port scan, WAF, OSINT, DNS & WHOIS audit.</div>
+          </div>
+          <div class="preset-card" id="preset-fuzz" onclick="applyPreset('fuzz')">
+            <div class="preset-title">📂 Directory Fuzzing</div>
+            <div class="preset-desc">High-speed embedded wordlist fuzzing with auto-calibration.</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Modules Chooser -->
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title">🧩 3. Web Vulnerability Modules</div>
+          <div style="display: flex; gap: 8px;">
+            <button class="quick-target-pill" onclick="selectAllModules(true)">Select All</button>
+            <button class="quick-target-pill" onclick="selectAllModules(false)">Clear</button>
+          </div>
+        </div>
+
+        <div class="module-category">
+          <div class="category-label">High-Impact Injections</div>
+          <div class="chip-grid">
+            <div class="chip active" data-mod="sqli" onclick="toggleModule(this)">SQLi</div>
+            <div class="chip active" data-mod="cmdi" onclick="toggleModule(this)">CMDi (RCE)</div>
+            <div class="chip active" data-mod="lfi" onclick="toggleModule(this)">LFI / Traversal</div>
+            <div class="chip active" data-mod="ssti" onclick="toggleModule(this)">SSTI</div>
+            <div class="chip active" data-mod="xss" onclick="toggleModule(this)">Reflected XSS</div>
+            <div class="chip active" data-mod="xxe" onclick="toggleModule(this)">XXE</div>
+            <div class="chip active" data-mod="nosqli" onclick="toggleModule(this)">NoSQLi</div>
+            <div class="chip active" data-mod="crlf" onclick="toggleModule(this)">CRLF</div>
+          </div>
+        </div>
+
+        <div class="module-category">
+          <div class="category-label">Access, Auth & Logic</div>
+          <div class="chip-grid">
+            <div class="chip active" data-mod="ssrf" onclick="toggleModule(this)">SSRF</div>
+            <div class="chip active" data-mod="jwt" onclick="toggleModule(this)">JWT Bypass</div>
+            <div class="chip active" data-mod="idor" onclick="toggleModule(this)">IDOR</div>
+            <div class="chip active" data-mod="csrf" onclick="toggleModule(this)">CSRF</div>
+            <div class="chip active" data-mod="cors" onclick="toggleModule(this)">CORS</div>
+            <div class="chip active" data-mod="redirect" onclick="toggleModule(this)">Open Redirect</div>
+            <div class="chip active" data-mod="upload" onclick="toggleModule(this)">Upload</div>
+          </div>
+        </div>
+
+        <div class="module-category">
+          <div class="category-label">Recon, Exposure & Modern APIs</div>
+          <div class="chip-grid">
+            <div class="chip active" data-mod="waf" onclick="toggleModule(this)">WAF Fingerprint</div>
+            <div class="chip active" data-mod="headers" onclick="toggleModule(this)">Security Headers</div>
+            <div class="chip active" data-mod="exposure" onclick="toggleModule(this)">Exposed Files (.env/.git)</div>
+            <div class="chip active" data-mod="secrets" onclick="toggleModule(this)">Secrets Miner</div>
+            <div class="chip active" data-mod="graphql" onclick="toggleModule(this)">GraphQL</div>
+            <div class="chip active" data-mod="jsminer" onclick="toggleModule(this)">JS Miner</div>
+            <div class="chip active" data-mod="gitdumper" onclick="toggleModule(this)">Git Dumper</div>
+            <div class="chip active" data-mod="smuggling" onclick="toggleModule(this)">Smuggling</div>
+            <div class="chip active" data-mod="userenum" onclick="toggleModule(this)">User Enum</div>
+            <div class="chip active" data-mod="race" onclick="toggleModule(this)">Race Condition</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Nuclei Monster Engine Config -->
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title">⚡ 4. Nuclei Vulnerability Engine</div>
+          <label class="switch">
+            <input type="checkbox" id="nucleiToggle" checked onchange="updateCommand()" />
+            <span class="slider-toggle"></span>
+          </label>
+        </div>
+
+        <div id="nucleiConfigSection" class="nuclei-box">
+          <div class="category-label" style="color: var(--accent-cyan);">Severity Filter</div>
+          <div class="chip-grid">
+            <div class="chip active" data-sev="critical" onclick="toggleSeverity(this)">Critical</div>
+            <div class="chip active" data-sev="high" onclick="toggleSeverity(this)">High</div>
+            <div class="chip active" data-sev="medium" onclick="toggleSeverity(this)">Medium</div>
+            <div class="chip" data-sev="low" onclick="toggleSeverity(this)">Low</div>
+            <div class="chip" data-sev="info" onclick="toggleSeverity(this)">Info</div>
+          </div>
+
+          <div class="category-label" style="color: var(--accent-cyan); margin-top: 12px;">Targeted Tags</div>
+          <div class="chip-grid">
+            <div class="chip active" data-tag="cve" onclick="toggleTag(this)">cve</div>
+            <div class="chip active" data-tag="misconfig" onclick="toggleTag(this)">misconfig</div>
+            <div class="chip active" data-tag="exposure" onclick="toggleTag(this)">exposure</div>
+            <div class="chip" data-tag="nginx" onclick="toggleTag(this)">nginx</div>
+            <div class="chip" data-tag="apache" onclick="toggleTag(this)">apache</div>
+            <div class="chip" data-tag="php" onclick="toggleTag(this)">php</div>
+            <div class="chip" data-tag="spring" onclick="toggleTag(this)">spring</div>
+            <div class="chip" data-tag="wordpress" onclick="toggleTag(this)">wordpress</div>
+            <div class="chip" data-tag="all" onclick="toggleTag(this)">all (full 13k)</div>
+          </div>
+
+          <div class="slider-row">
+            <span>Concurrency (-nuclei-c): <strong id="nucleiCVal" style="color: var(--accent-cyan);">35</strong> threads</span>
+            <input type="range" class="slider" id="nucleiCSlider" min="10" max="100" value="35" oninput="updateNucleiC(this.value)" />
+          </div>
+
+          <div style="margin-top: 10px;">
+            <label style="font-size: 11px; color: var(--text-muted);">Additional Raw Nuclei Flags (-nuclei-args):</label>
+            <input type="text" id="nucleiArgsInput" class="text-input" placeholder="e.g. -dast or -as" oninput="updateCommand()" />
+          </div>
+        </div>
+      </div>
+
+      <!-- Advanced & Stealth Settings -->
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title">🛡️ 5. Stealth & Engine Options</div>
+        </div>
+
+        <div class="toggle-row">
+          <span>Burp Suite Proxy (127.0.0.1:8080)</span>
+          <label class="switch">
+            <input type="checkbox" id="proxyToggle" onchange="updateCommand()" />
+            <span class="slider-toggle"></span>
+          </label>
+        </div>
+
+        <div class="toggle-row">
+          <span>WAF Bypass Headers (-tamper-headers)</span>
+          <label class="switch">
+            <input type="checkbox" id="tamperToggle" onchange="updateCommand()" />
+            <span class="slider-toggle"></span>
+          </label>
+        </div>
+
+        <div class="toggle-row">
+          <span>Adaptive WAF Throttling (-adaptive)</span>
+          <label class="switch">
+            <input type="checkbox" id="adaptiveToggle" onchange="updateCommand()" />
+            <span class="slider-toggle"></span>
+          </label>
+        </div>
+
+        <div style="margin-top: 10px;">
+          <label style="font-size: 11px; color: var(--text-muted);">Custom Header (-H):</label>
+          <input type="text" id="headerInput" class="text-input" placeholder="Authorization: Bearer <token>" oninput="updateCommand()" />
+        </div>
+      </div>
+    </section>
+
+    <!-- Right Column: Command Generator & Real-time Live Execution -->
+    <section>
+      <!-- Generated Command Box -->
+      <div class="cmd-terminal">
+        <div class="cmd-header">
+          <div class="terminal-dots">
+            <div class="t-dot t-red"></div>
+            <div class="t-dot t-yellow"></div>
+            <div class="t-dot t-green"></div>
+          </div>
+          <span style="font-size: 11px; color: var(--accent-cyan); font-weight: 700; text-transform: uppercase;">Generated Terminal Command</span>
+        </div>
+
+        <div class="cmd-box" id="cmdOutput">nightfalllx http://app.discover.hard</div>
+
+        <div class="btn-row">
+          <button class="btn btn-copy" id="copyBtn" onclick="copyCommand()">
+            <span>📋 Copy Command</span>
+          </button>
+          <button class="btn btn-run" id="runBtn" onclick="runScan()">
+            <span>⚡ Run Scan Directly</span>
+          </button>
+          <button class="btn btn-stop" id="stopBtn" style="display: none;" onclick="stopScan()">
+            <span>🛑 Stop</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- Execution Console Card -->
+      <div class="card" style="margin-top: 20px;">
+        <div class="card-header">
+          <div class="card-title">🖥️ Live Execution Terminal</div>
+          <div id="scanStatusBadge" style="font-size: 12px; font-weight: 700; color: var(--text-dim);">STANDBY</div>
+        </div>
+
+        <div class="output-box" id="terminalOutput">
+          <div class="output-placeholder">
+            Ready to execute. Click <strong>"Run Scan Directly"</strong> to launch this assessment, or copy the command to run in your terminal.
+          </div>
+        </div>
+
+        <div id="reportActions" style="display: none; margin-top: 14px;">
+          <button class="btn btn-report" onclick="openReport()">
+            <span>🌐 View Interactive HTML Report (lab_report.html)</span>
+          </button>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <div id="toast">📋 Command copied to clipboard!</div>
+
+  <script>
+    let currentPreset = "auto";
+    let activeModules = new Set([
+      "sqli", "cmdi", "lfi", "ssti", "xss", "xxe", "nosqli", "crlf",
+      "ssrf", "jwt", "idor", "csrf", "cors", "redirect", "upload",
+      "waf", "headers", "exposure", "secrets", "graphql", "jsminer",
+      "gitdumper", "smuggling", "userenum", "race"
+    ]);
+    let activeSeverities = new Set(["critical", "high", "medium"]);
+    let activeTags = new Set(["cve", "misconfig", "exposure"]);
+    let isRunning = false;
+    let eventSource = null;
+
+    // Detect target format
+    const targetInput = document.getElementById("targetInput");
+    const detectBadge = document.getElementById("targetDetectBadge");
+
+    targetInput.addEventListener("input", () => {
+      detectTargetType(targetInput.value.trim());
+      updateCommand();
+    });
+
+    function setTarget(val) {
+      targetInput.value = val;
+      detectTargetType(val);
+      updateCommand();
+    }
+
+    function detectTargetType(val) {
+      if (!val) {
+        detectBadge.textContent = "EMPTY";
+        return;
+      }
+      if (/^https?:\/\//i.test(val)) {
+        detectBadge.textContent = val.toLowerCase().startsWith("https") ? "HTTPS URL" : "HTTP URL";
+      } else if (/^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}(:\d+)?$/.test(val)) {
+        detectBadge.textContent = "IPv4 HOST";
+      } else if (/^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}(:\d+)?$/.test(val)) {
+        detectBadge.textContent = "DOMAIN";
+      } else {
+        detectBadge.textContent = "HOST";
+      }
+    }
+
+    // Presets
+    function applyPreset(name) {
+      currentPreset = name;
+      document.querySelectorAll(".preset-card").forEach(c => c.classList.remove("active"));
+      const pElem = document.getElementById("preset-" + name);
+      if (pElem) pElem.classList.add("active");
+
+      if (name === "auto") {
+        document.getElementById("nucleiToggle").checked = true;
+        selectAllModules(true);
+        activeSeverities = new Set(["critical", "high", "medium"]);
+        activeTags = new Set(["cve", "misconfig", "exposure"]);
+      } else if (name === "nuclei") {
+        document.getElementById("nucleiToggle").checked = true;
+        activeSeverities = new Set(["critical", "high", "medium"]);
+        activeTags = new Set(["cve", "misconfig"]);
+      } else if (name === "critical") {
+        document.getElementById("nucleiToggle").checked = true;
+        activeModules = new Set(["sqli", "cmdi", "lfi", "ssrf", "xxe", "upload"]);
+        activeSeverities = new Set(["critical", "high"]);
+        activeTags = new Set(["cve"]);
+        syncChipUI();
+      } else if (name === "graphql") {
+        document.getElementById("nucleiToggle").checked = false;
+        activeModules = new Set(["graphql", "secrets", "jsminer"]);
+        syncChipUI();
+      } else if (name === "recon") {
+        document.getElementById("nucleiToggle").checked = false;
+        activeModules = new Set(["waf", "headers", "exposure", "secrets"]);
+        syncChipUI();
+      } else if (name === "fuzz") {
+        document.getElementById("nucleiToggle").checked = false;
+        if (!targetInput.value.includes("FUZZ")) {
+          targetInput.value = targetInput.value.replace(/\/?$/, "/FUZZ");
+        }
+      }
+
+      syncNucleiUI();
+      updateCommand();
+    }
+
+    function toggleModule(elem) {
+      const mod = elem.getAttribute("data-mod");
+      if (activeModules.has(mod)) {
+        activeModules.delete(mod);
+        elem.classList.remove("active");
+      } else {
+        activeModules.add(mod);
+        elem.classList.add("active");
+      }
+      currentPreset = "custom";
+      document.querySelectorAll(".preset-card").forEach(c => c.classList.remove("active"));
+      updateCommand();
+    }
+
+    function selectAllModules(enable) {
+      const chips = document.querySelectorAll(".chip[data-mod]");
+      activeModules.clear();
+      chips.forEach(c => {
+        if (enable) {
+          activeModules.add(c.getAttribute("data-mod"));
+          c.classList.add("active");
+        } else {
+          c.classList.remove("active");
+        }
+      });
+      updateCommand();
+    }
+
+    function syncChipUI() {
+      document.querySelectorAll(".chip[data-mod]").forEach(c => {
+        const mod = c.getAttribute("data-mod");
+        if (activeModules.has(mod)) c.classList.add("active");
+        else c.classList.remove("active");
+      });
+    }
+
+    function toggleSeverity(elem) {
+      const sev = elem.getAttribute("data-sev");
+      if (activeSeverities.has(sev)) {
+        activeSeverities.delete(sev);
+        elem.classList.remove("active");
+      } else {
+        activeSeverities.add(sev);
+        elem.classList.add("active");
+      }
+      updateCommand();
+    }
+
+    function toggleTag(elem) {
+      const tag = elem.getAttribute("data-tag");
+      if (activeTags.has(tag)) {
+        activeTags.delete(tag);
+        elem.classList.remove("active");
+      } else {
+        activeTags.add(tag);
+        elem.classList.add("active");
+      }
+      updateCommand();
+    }
+
+    function syncNucleiUI() {
+      document.querySelectorAll(".chip[data-sev]").forEach(c => {
+        if (activeSeverities.has(c.getAttribute("data-sev"))) c.classList.add("active");
+        else c.classList.remove("active");
+      });
+      document.querySelectorAll(".chip[data-tag]").forEach(c => {
+        if (activeTags.has(c.getAttribute("data-tag"))) c.classList.add("active");
+        else c.classList.remove("active");
+      });
+    }
+
+    function updateNucleiC(val) {
+      document.getElementById("nucleiCVal").textContent = val;
+      updateCommand();
+    }
+
+    // Build terminal command
+    function updateCommand() {
+      let rawTarget = targetInput.value.trim() || "http://app.discover.hard";
+      let parts = ["nightfalllx"];
+
+      // If preset auto and target standard
+      if (currentPreset === "auto") {
+        parts.push(rawTarget);
+        parts.push("-auto");
+      } else if (currentPreset === "nuclei") {
+        parts.push("-u", rawTarget);
+        parts.push("-nuclei");
+      } else {
+        parts.push("-u", rawTarget);
+        if (activeModules.size > 0 && activeModules.size < 25) {
+          parts.push("-m", Array.from(activeModules).join(","));
+        } else if (activeModules.size === 25) {
+          parts.push("-m", "all");
+        }
+      }
+
+      // Nuclei settings
+      const nucleiActive = document.getElementById("nucleiToggle").checked;
+      if (nucleiActive && currentPreset !== "auto") {
+        if (!parts.includes("-nuclei") && !parts.includes("-m")) {
+          parts.push("-nuclei");
+        }
+        if (activeSeverities.size > 0 && activeSeverities.size < 5) {
+          parts.push("-sev", Array.from(activeSeverities).join(","));
+        }
+        if (activeTags.size > 0) {
+          parts.push("-tags", Array.from(activeTags).join(","));
+        }
+        const nC = document.getElementById("nucleiCSlider").value;
+        if (nC !== "35") {
+          parts.push("-nuclei-c", nC);
+        }
+        const nArgs = document.getElementById("nucleiArgsInput").value.trim();
+        if (nArgs) {
+          parts.push("-nuclei-args", `"${nArgs}"`);
+        }
+      }
+
+      // Stealth & Engine
+      if (document.getElementById("proxyToggle").checked) {
+        parts.push("-p", "http://127.0.0.1:8080");
+      }
+      if (document.getElementById("tamperToggle").checked) {
+        parts.push("-tamper-headers");
+      }
+      if (document.getElementById("adaptiveToggle").checked) {
+        parts.push("-adaptive");
+      }
+      const customHeader = document.getElementById("headerInput").value.trim();
+      if (customHeader) {
+        parts.push("-H", `"${customHeader}"`);
+      }
+
+      const cmdStr = parts.join(" ");
+      document.getElementById("cmdOutput").textContent = cmdStr;
+      return cmdStr;
+    }
+
+    // Copy to clipboard
+    function copyCommand() {
+      const cmd = document.getElementById("cmdOutput").textContent;
+      navigator.clipboard.writeText(cmd).then(() => {
+        showToast("📋 Command copied to clipboard!");
+      });
+    }
+
+    function showToast(msg) {
+      const toast = document.getElementById("toast");
+      toast.textContent = msg;
+      toast.style.display = "flex";
+      setTimeout(() => { toast.style.display = "none"; }, 2500);
+    }
+
+    // Run scan via API
+    function runScan() {
+      if (isRunning) return;
+      const cmd = document.getElementById("cmdOutput").textContent;
+      const term = document.getElementById("terminalOutput");
+      term.innerHTML = `<span style="color: #38bdf8;">[+] Initializing NightfallLX execution...</span>\n<span style="color: #a855f7;">$ ${cmd}</span>\n\n`;
+
+      document.getElementById("runBtn").style.display = "none";
+      document.getElementById("stopBtn").style.display = "flex";
+      document.getElementById("scanStatusBadge").textContent = "SCANNING...";
+      document.getElementById("scanStatusBadge").style.color = "#10b981";
+      document.getElementById("reportActions").style.display = "none";
+      isRunning = true;
+
+      fetch("/api/scan", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ command: cmd })
+      }).then(r => r.json()).then(res => {
+        listenStream();
+      }).catch(err => {
+        term.innerHTML += `<span style="color: #ef4444;">[!] Error launching scan: ${err}</span>\n`;
+        resetButtons();
+      });
+    }
+
+    function listenStream() {
+      if (eventSource) eventSource.close();
+      eventSource = new EventSource("/api/scan/stream");
+      const term = document.getElementById("terminalOutput");
+
+      eventSource.onmessage = (e) => {
+        const data = JSON.parse(e.data);
+        if (data.type === "stdout" || data.type === "stderr") {
+          let line = data.line;
+          // Format line colors
+          let color = "#e2e8f0";
+          if (line.includes("[CONFIRMED]") || line.includes("VULNERABLE") || line.includes("CRITICAL")) color = "#f43f5e";
+          else if (line.includes("[HIGH]")) color = "#fb923c";
+          else if (line.includes("[+]")) color = "#34d399";
+          else if (line.includes("[*]")) color = "#38bdf8";
+          else if (line.includes("[!]")) color = "#facc15";
+
+          term.innerHTML += `<span style="color: ${color};">${escapeHtml(line)}</span>\n`;
+          term.scrollTop = term.scrollHeight;
+        } else if (data.type === "done") {
+          term.innerHTML += `\n<span style="color: #10b981; font-weight: bold;">[✓] Scan finished with code ${data.code}</span>\n`;
+          eventSource.close();
+          resetButtons();
+          document.getElementById("reportActions").style.display = "block";
+          document.getElementById("scanStatusBadge").textContent = "FINISHED";
+          document.getElementById("scanStatusBadge").style.color = "#38bdf8";
+        }
+      };
+
+      eventSource.onerror = () => {
+        resetButtons();
+      };
+    }
+
+    function stopScan() {
+      fetch("/api/scan/stop", { method: "POST" }).then(() => {
+        if (eventSource) eventSource.close();
+        resetButtons();
+        const term = document.getElementById("terminalOutput");
+        term.innerHTML += `\n<span style="color: #ef4444;">[!] Scan interrupted by user</span>\n`;
+      });
+    }
+
+    function resetButtons() {
+      isRunning = false;
+      document.getElementById("runBtn").style.display = "flex";
+      document.getElementById("stopBtn").style.display = "none";
+    }
+
+    function openReport() {
+      window.open("/reports/lab_report.html", "_blank");
+    }
+
+    function escapeHtml(text) {
+      return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    }
+
+    // Initialize
+    detectTargetType(targetInput.value);
+    updateCommand();
+  </script>
+</body>
+</html>

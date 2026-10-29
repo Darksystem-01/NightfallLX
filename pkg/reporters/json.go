@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"nightfalllx/pkg/cvss"
 	"nightfalllx/pkg/modules"
 	"os"
 	"strings"
@@ -61,6 +62,7 @@ type Summary struct {
 type FindingView struct {
 	*modules.Finding
 	CVSSScore     float64 `json:"cvss_score"`
+	CVSSVector    string  `json:"cvss_vector,omitempty"`
 	CWEURL        string  `json:"cwe_url,omitempty"`
 	Curl          string  `json:"curl"`
 	SeverityClass string  `json:"severity_class"`
@@ -104,7 +106,24 @@ func findingCVSS(f *modules.Finding) float64 {
 	if f.CVSS > 0 {
 		return f.CVSS
 	}
+	if f.CVSSVector != "" {
+		if res, err := cvss.CalculateVector(f.CVSSVector); err == nil {
+			f.CVSS = res.BaseScore
+			return res.BaseScore
+		}
+	}
 	return CVSSForSeverity(f.Severity)
+}
+
+func findingCVSSVector(f *modules.Finding) string {
+	if f == nil {
+		return ""
+	}
+	if f.CVSSVector != "" {
+		return f.CVSSVector
+	}
+	res := cvss.ClassifyFinding(f.Module, f.Title, f.CWEID)
+	return res.VectorString
 }
 
 // SeverityClass returns a stable CSS/JSON-safe lowercase severity name.
@@ -167,8 +186,9 @@ func buildFindingViews(target *modules.Target, findings []*modules.Finding) []Fi
 		views = append(views, FindingView{
 			Finding:       f,
 			CVSSScore:     findingCVSS(f),
+			CVSSVector:    findingCVSSVector(f),
 			CWEURL:        cweURL(f.CWEID),
-			Curl:          buildCurl(target, f.Parameter, f.Payload),
+			Curl:          buildCurlFinding(target, f),
 			SeverityClass: SeverityClass(f.Severity),
 		})
 	}

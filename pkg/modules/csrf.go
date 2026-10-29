@@ -22,7 +22,7 @@ func (m *CSRFModule) Description() string {
 }
 
 var (
-	csrfTokenRegex = regexp.MustCompile(`(?i)(csrf|xsrf|_token|authenticity_token|nonce|protect|forgery)`)
+	csrfTokenRegex  = regexp.MustCompile(`(?i)(csrf|xsrf|_token|authenticity_token|nonce|protect|forgery)`)
 	formMethodRegex = regexp.MustCompile(`(?i)<form[^>]+method=["'](post|put|delete)["']`)
 	formActionRegex = regexp.MustCompile(`(?i)<form[^>]*action=["']([^"']*)["']`)
 )
@@ -38,8 +38,14 @@ func (m *CSRFModule) Run(target *Target, c *client.Client) ([]*Finding, error) {
 		return nil, nil
 	}
 
-	// 1. Check if direct POST/PUT/DELETE has anti-CSRF parameter
+	// 1. Check if direct POST/PUT/DELETE has anti-CSRF protection
 	if isStateChanging {
+		// APIs using application/json or Bearer authorization are inherently protected against simple cross-site browser CSRF
+		isJSONBody := strings.HasPrefix(strings.TrimSpace(target.Data["_raw"]), "{") ||
+			strings.HasPrefix(strings.TrimSpace(target.Data["_raw"]), "[")
+		cType := strings.ToLower(resp.Headers.Get("Content-Type"))
+		isJSONAPI := strings.Contains(cType, "application/json") || isJSONBody
+
 		hasTokenParam := false
 		for _, p := range target.Parameters() {
 			if csrfTokenRegex.MatchString(p) {
@@ -48,8 +54,8 @@ func (m *CSRFModule) Run(target *Target, c *client.Client) ([]*Finding, error) {
 			}
 		}
 
-		if !hasTokenParam {
-			// Check cookie SameSite attribute
+		// Only flag CSRF if state-changing request relies on cookies without anti-CSRF token and is not a JSON API
+		if !hasTokenParam && !isJSONAPI {
 			setCookie := resp.Headers.Get("Set-Cookie")
 			hasSameSiteStrictOrLax := strings.Contains(strings.ToLower(setCookie), "samesite=strict") ||
 				strings.Contains(strings.ToLower(setCookie), "samesite=lax")

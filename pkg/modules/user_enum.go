@@ -80,6 +80,11 @@ func (m *UserEnumModule) Run(target *Target, c *client.Client) ([]*Finding, erro
 				continue
 			}
 
+			// Eliminate WAF block & rate limiting False Positives (403 Forbidden, 429 Too Many Requests, 5xx)
+			if respCand.StatusCode == 403 || respCand.StatusCode == 429 || respCand.StatusCode >= 500 {
+				continue
+			}
+
 			// Heuristic 1: Inferred Failure Regex breaks (e.g. server no longer says "User not found")
 			failureRegexBypassed := false
 			if inferredFailRegex != nil && inferredFailRegex.MatchString(respCanary1.Body) && !inferredFailRegex.MatchString(respCand.Body) {

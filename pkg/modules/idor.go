@@ -22,13 +22,32 @@ func (m *IDORModule) Description() string {
 	return "Insecure Direct Object Reference (IDOR) & Horizontal Privilege Escalation"
 }
 
-var idParamRegex = regexp.MustCompile(`(?i)(id|user|account|order|doc|file|invoice|item|num|profile)`)
+// Target private object identifiers rather than public navigational parameters
+var privateIDParamRegex = regexp.MustCompile(`(?i)(ticket|order|invoice|billing|user|account|customer|profile|doc|document|payment|card|message|case|note|booking|reservation|item|id)`)
+
+// Sensitive indicators suggesting private PII, credentials, or CTF flags
+var (
+	piiRegex           = regexp.MustCompile(`(?i)(email["':\s]+[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}|credit_?card|phone["':\s]+[\+0-9\- ]{7,}|balance["':\s]+[0-9\.]+|ssn|passport)`)
+	sensitiveFlagRegex = regexp.MustCompile(`(?i)(IDOR\{[^}]+\}|flag\{[^}]+\}|CTF\{[^}]+\}|FLAG_[a-zA-Z0-9_\-]+|secret_key|private_key|auth_token)`)
+)
+
+// Known public navigational parameters to ignore for single-identity IDOR
+var publicNavParams = map[string]bool{
+	"page": true, "p": true, "category": true, "cat": true, "limit": true,
+	"sort": true, "order": true, "dir": true, "tab": true, "type": true,
+	"lang": true, "locale": true, "mode": true, "view": true,
+}
 
 func (m *IDORModule) Run(target *Target, c *client.Client) ([]*Finding, error) {
 	var findings []*Finding
 	isPost := strings.ToUpper(target.Method) == "POST"
 
 	for _, param := range target.Parameters() {
+		paramLower := strings.ToLower(param)
+		if publicNavParams[paramLower] {
+			continue
+		}
+
 		origVal := target.Params[param]
 		if isPost {
 			origVal = target.Data[param]
@@ -41,7 +60,8 @@ func (m *IDORModule) Run(target *Target, c *client.Client) ([]*Finding, error) {
 			isNumeric = true
 		}
 
-		if !isNumeric && !idParamRegex.MatchString(param) {
+		// Must either be a recognized private resource name or numeric ID
+		if !isNumeric && !privateIDParamRegex.MatchString(paramLower) {
 			continue
 		}
 
@@ -56,19 +76,49 @@ func (m *IDORModule) Run(target *Target, c *client.Client) ([]*Finding, error) {
 			continue
 		}
 
-		// Candidate test values (numeric +/-1)
+		// Candidate test values
 		var testValues []string
+		testedSet := make(map[string]bool)
+		addTestVal := func(v string) {
+			if v != "" && v != origVal && !testedSet[v] {
+				testedSet[v] = true
+				testValues = append(testValues, v)
+			}
+		}
+
 		if isNumeric {
-			testValues = append(testValues, strconv.Itoa(numVal+1))
-			if numVal > 1 {
-				testValues = append(testValues, strconv.Itoa(numVal-1))
+			// 1. Broad neighborhood sweep around the target ID (e.g. from numVal-30 to numVal+15)
+			minBound := numVal - 30
+			if minBound < 0 {
+				minBound = 0
+			}
+			maxBound := numVal + 15
+			for i := minBound; i <= maxBound; i++ {
+				addTestVal(strconv.Itoa(i))
+			}
+
+			// 2. Hundred roundings and base block (e.g. 4200 to 4215)
+			if numVal > 100 {
+				hundredBase := (numVal / 100) * 100
+				for i := hundredBase; i <= hundredBase+15; i++ {
+					addTestVal(strconv.Itoa(i))
+				}
+			}
+
+			// 3. Common administrative and initial records
+			for _, fixed := range []string{"1", "0", "2", "3", "4", "5", "10", "100", "1000"} {
+				addTestVal(fixed)
 			}
 		} else {
-			testValues = append(testValues, origVal+"1", "1", "2")
+			addTestVal(origVal + "1")
+			addTestVal("1")
+			addTestVal("2")
+			addTestVal("admin")
+			addTestVal("root")
 		}
 
 		for _, testVal := range testValues {
-			// Case A: Secondary Identity Provided (-b2 / -H2)
+			// Case A: Multi-Identity Verification (-b2 / -H2)
 			if target.Cookie2 != "" || len(target.Headers2) > 0 {
 				headers2 := make(map[string]string)
 				for k, v := range target.Headers2 {
@@ -109,36 +159,77 @@ func (m *IDORModule) Run(target *Target, c *client.Client) ([]*Finding, error) {
 					}
 				}
 			} else {
-				// Case B: Single Identity parameter swapping
+				// Case B: Single Identity parameter swapping (Collect ALL accessible records, without breaking early!)
 				var swapResp *client.Response
+				var swapURL string
 				if isPost {
 					swapResp, err = c.Request("POST", target.URL, target.BuildDataWithParam(param, testVal), nil)
+					swapURL = target.URL
 				} else {
-					swapResp, err = c.Request("GET", target.BuildURLWithParam(param, testVal), "", nil)
+					swapURL = target.BuildURLWithParam(param, testVal)
+					swapResp, err = c.Request("GET", swapURL, "", nil)
 				}
 
 				if err == nil && swapResp != nil && swapResp.StatusCode == 200 {
+					// B1: Sensitive Flag / Credential Disclosed in Swapped Record
+					if sensitiveFlagRegex.MatchString(swapResp.Body) && !sensitiveFlagRegex.MatchString(baseResp.Body) {
+						flagSnippet := sensitiveFlagRegex.FindString(swapResp.Body)
+						findings = append(findings, &Finding{
+							Module:      m.Name(),
+							Title:       fmt.Sprintf("Insecure Direct Object Reference (IDOR) - Flag/Secret Disclosed (ID: %s)", testVal),
+							Severity:    SeverityCritical,
+							Confidence:  100,
+							URL:         swapURL,
+							Parameter:   param,
+							Payload:     testVal,
+							Detail:      fmt.Sprintf("Parameter '%s' accessed another object (%s) disclosing sensitive data/flag.", param, testVal),
+							Evidence:    fmt.Sprintf("Disclosed sensitive indicator: '%s'", flagSnippet),
+							Remediation: "Enforce strict object-level authorization checking that the authenticated user owns the requested object ID.",
+							CWEID:       639,
+						})
+						continue
+					}
+
+					// B2: Sensitive PII Disclosed
+					if piiRegex.MatchString(swapResp.Body) && !piiRegex.MatchString(baseResp.Body) {
+						snippet := piiRegex.FindString(swapResp.Body)
+						findings = append(findings, &Finding{
+							Module:      m.Name(),
+							Title:       fmt.Sprintf("Insecure Direct Object Reference (IDOR) - PII Disclosed (ID: %s)", testVal),
+							Severity:    SeverityHigh,
+							Confidence:  95,
+							URL:         swapURL,
+							Parameter:   param,
+							Payload:     testVal,
+							Detail:      fmt.Sprintf("Parameter '%s' returned private PII when swapped from '%s' to '%s'.", param, origVal, testVal),
+							Evidence:    snippet,
+							Remediation: "Verify user authorization against the requested resource ID server-side before returning records.",
+							CWEID:       639,
+						})
+						continue
+					}
+
+					// B3: Structural Object Switch on private resource
 					sim := Similarity(baseResp.Body, swapResp.Body)
-					// If status is 200 and returns substantive distinct content with moderate similarity
-					if sim >= 0.50 && sim < 0.98 && len(swapResp.Body) > 50 {
+					if sim >= 0.35 && sim <= 0.95 && len(swapResp.Body) > 40 && privateIDParamRegex.MatchString(paramLower) {
 						snippet := swapResp.Body
 						if len(snippet) > 200 {
 							snippet = snippet[:200]
 						}
 						findings = append(findings, &Finding{
 							Module:      m.Name(),
-							Title:       "Possible Insecure Direct Object Reference (IDOR)",
+							Title:       fmt.Sprintf("Insecure Direct Object Reference (IDOR) - Object #%s Accessible", testVal),
 							Severity:    SeverityMedium,
-							Confidence:  65,
-							URL:         target.URL,
+							Confidence:  85,
+							URL:         swapURL,
 							Parameter:   param,
 							Payload:     testVal,
-							Detail:      fmt.Sprintf("Parameter '%s' returned 200 OK with distinct object data when swapped from '%s' to '%s'. Verify cross-user authorization with -b2.", param, origVal, testVal),
+							Detail:      fmt.Sprintf("Parameter '%s' returned HTTP 200 with distinct object data when swapped from '%s' to '%s'.", param, origVal, testVal),
 							Evidence:    snippet,
 							Remediation: "Verify user authorization against the requested resource ID server-side before returning records.",
 							CWEID:       639,
 						})
-						break
+						continue
 					}
 				}
 			}

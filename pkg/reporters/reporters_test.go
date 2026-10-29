@@ -385,3 +385,35 @@ func TestHTMLReportDurationAndMethod(t *testing.T) {
 		t.Fatal("method missing")
 	}
 }
+
+func TestBuildCurlFinding_GraphQLAndREST(t *testing.T) {
+	target := &modules.Target{
+		URL:    "http://app.discover.hard/graphql",
+		Method: "POST",
+	}
+
+	// 1. GraphQL Introspection Finding
+	fIntro := &modules.Finding{
+		Module:   "graphql",
+		Title:    "GraphQL Introspection Schema Publicly Exposed",
+		URL:      "http://app.discover.hard/graphql",
+		Payload:  `{"query":"query IntrospectionQuery { __schema { types { name } } }"}`,
+		Severity: modules.SeverityHigh,
+	}
+	curlIntro := buildCurlFinding(target, fIntro)
+	if !strings.Contains(curlIntro, "-H 'Content-Type: application/json'") || !strings.Contains(curlIntro, "--data-raw") || strings.Contains(curlIntro, "--data '=") {
+		t.Fatalf("GraphQL Introspection curl is malformed: %s", curlIntro)
+	}
+
+	// 2. GraphQL GET Query Finding
+	fGET := &modules.Finding{
+		Module:   "graphql",
+		Title:    "GraphQL Executable Over HTTP GET Method",
+		URL:      "http://app.discover.hard/graphql?query=%7B__typename%7D",
+		Severity: modules.SeverityLow,
+	}
+	curlGET := buildCurlFinding(target, fGET)
+	if strings.Contains(curlGET, "-X POST") || strings.Contains(curlGET, "--data") || !strings.Contains(curlGET, "http://app.discover.hard/graphql?query=%7B__typename%7D") {
+		t.Fatalf("GraphQL GET curl is malformed: %s", curlGET)
+	}
+}

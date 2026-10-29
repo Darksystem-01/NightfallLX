@@ -67,6 +67,13 @@ func (m *JWTModule) Run(target *Target, c *client.Client) ([]*Finding, error) {
 			continue
 		}
 
+		// Verify that endpoint actually enforces authentication
+		unauthResp, unauthErr := c.Request(target.Method, target.URL, "", nil)
+		if unauthErr == nil && unauthResp != nil && (unauthResp.StatusCode == 200 || unauthResp.StatusCode == 204) {
+			// Endpoint is public: returns success even without authentication, so alg:none is not a bypass!
+			continue
+		}
+
 		// Craft "alg": "none" token
 		noneHeader := map[string]string{"alg": "none", "typ": "JWT"}
 		noneHeaderBytes, _ := json.Marshal(noneHeader)

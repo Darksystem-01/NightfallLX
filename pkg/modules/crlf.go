@@ -3,6 +3,7 @@ package modules
 import (
 	"fmt"
 	"nightfalllx/pkg/client"
+	"nightfalllx/pkg/wordlists"
 	"strings"
 )
 
@@ -20,21 +21,28 @@ func (m *CRLFModule) Description() string {
 	return "CRLF / HTTP Response Splitting & Header Injection"
 }
 
-var crlfPayloads = []struct {
-	Name    string
-	Payload string
-}{
-	{"URL-Encoded CRLF", "%0d%0aX-Injected-Header:%20nflx_crlf"},
-	{"Double URL-Encoded CRLF", "%250d%250aX-Injected-Header:%20nflx_crlf"},
-	{"Set-Cookie CRLF", "%0d%0aSet-Cookie:%20nflx_crlf=1"},
-}
-
 func (m *CRLFModule) Run(target *Target, c *client.Client) ([]*Finding, error) {
 	var findings []*Finding
 	isPost := strings.ToUpper(target.Method) == "POST"
 
 	for _, param := range target.Parameters() {
-		for _, probe := range crlfPayloads {
+		// Baseline to ensure header does not already exist
+		var baseResp *client.Response
+		if isPost {
+			baseResp, _ = c.Request("POST", target.URL, target.BuildDataWithParam(param, "test"), nil)
+		} else {
+			baseResp, _ = c.Request("GET", target.BuildURLWithParam(param, "test"), "", nil)
+		}
+		baseHeaders := ""
+		if baseResp != nil {
+			baseHeaders = fmt.Sprintf("%v", baseResp.Headers)
+		}
+
+		if strings.Contains(baseHeaders, "nflx_crlf") {
+			continue
+		}
+
+		for _, probe := range wordlists.CRLFPayloads {
 			var resp *client.Response
 			var err error
 			if isPost {

@@ -194,67 +194,111 @@ func highlightCurl(curl, payload string) template.HTML {
 }
 
 func buildRawRequest(target *modules.Target, f *modules.Finding) string {
-	if f.RawRequest != "" {
+	if f != nil && f.RawRequest != "" {
 		return f.RawRequest
 	}
-	if target == nil {
+	if target == nil && (f == nil || f.URL == "") {
 		return ""
 	}
 
-	method := strings.ToUpper(target.Method)
-	if method == "" {
-		method = "GET"
+	reqURL := ""
+	if f != nil && f.URL != "" {
+		reqURL = f.URL
+	} else if target != nil {
+		reqURL = target.URL
 	}
 
-	u, err := url.Parse(target.URL)
+	u, err := url.Parse(reqURL)
 	if err != nil {
 		u = &url.URL{Path: "/"}
 	}
 
+	method := "GET"
+	if target != nil && target.Method != "" {
+		method = strings.ToUpper(target.Method)
+	}
+
+	trimmedPayload := ""
+	if f != nil {
+		trimmedPayload = strings.TrimSpace(f.Payload)
+	}
+	isJSON := strings.HasPrefix(trimmedPayload, "{") || strings.HasPrefix(trimmedPayload, "[")
+
 	body := ""
+	contentType := ""
+
+	if f != nil && (f.Module == "graphql" || isJSON) {
+		if strings.Contains(reqURL, "?query=") || strings.Contains(strings.ToLower(f.Title), "get method") {
+			method = "GET"
+		} else if trimmedPayload != "" {
+			method = "POST"
+			body = f.Payload
+			contentType = "application/json"
+		}
+	} else if method == "POST" || method == "PUT" || method == "PATCH" {
+		if isJSON {
+			body = f.Payload
+			contentType = "application/json"
+		} else {
+			vals := url.Values{}
+			if target != nil {
+				for k, v := range target.Data {
+					vals.Set(k, v)
+				}
+			}
+			if f != nil && f.Parameter != "" {
+				vals.Set(f.Parameter, f.Payload)
+			}
+			body = vals.Encode()
+			if body != "" {
+				contentType = "application/x-www-form-urlencoded"
+			}
+		}
+	} else {
+		// GET request
+		q := u.Query()
+		if target != nil {
+			for k, v := range target.Params {
+				q.Set(k, v)
+			}
+		}
+		if f != nil && f.Parameter != "" {
+			q.Set(f.Parameter, f.Payload)
+		}
+		if len(q) > 0 {
+			u.RawQuery = q.Encode()
+		}
+	}
+
 	path := u.RequestURI()
 	if path == "" {
 		path = "/"
-	}
-
-	if method == "POST" || method == "PUT" || method == "PATCH" {
-		vals := url.Values{}
-		for k, v := range target.Data {
-			vals.Set(k, v)
-		}
-		if f.Parameter != "" {
-			vals.Set(f.Parameter, f.Payload)
-		}
-		body = vals.Encode()
-	} else {
-		q := u.Query()
-		for k, v := range target.Params {
-			q.Set(k, v)
-		}
-		if f.Parameter != "" {
-			q.Set(f.Parameter, f.Payload)
-		}
-		u.RawQuery = q.Encode()
-		path = u.RequestURI()
 	}
 
 	var b strings.Builder
 	fmt.Fprintf(&b, "%s %s HTTP/1.1\r\n", method, path)
 	fmt.Fprintf(&b, "Host: %s\r\n", u.Host)
 	b.WriteString("User-Agent: NightfallLX/2.0 (+https://github.com/Darksystem-01/NightfallLX)\r\n")
-	b.WriteString("Accept: */*\r\n")
+	b.WriteString("Accept: application/json, text/html, */*\r\n")
 
-	keys := make([]string, 0, len(target.Headers))
-	for k := range target.Headers {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	for _, k := range keys {
-		fmt.Fprintf(&b, "%s: %s\r\n", k, target.Headers[k])
+	if target != nil {
+		keys := make([]string, 0, len(target.Headers))
+		for k := range target.Headers {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		for _, k := range keys {
+			if strings.EqualFold(k, "content-type") && contentType != "" {
+				continue
+			}
+			fmt.Fprintf(&b, "%s: %s\r\n", k, target.Headers[k])
+		}
 	}
 
+	if contentType != "" {
+		fmt.Fprintf(&b, "Content-Type: %s\r\n", contentType)
+	}
 	if body != "" {
-		b.WriteString("Content-Type: application/x-www-form-urlencoded\r\n")
 		fmt.Fprintf(&b, "Content-Length: %d\r\n", len(body))
 	}
 	b.WriteString("Connection: close\r\n\r\n")

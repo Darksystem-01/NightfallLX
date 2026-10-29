@@ -31,17 +31,41 @@ const lightIntrospectionQuery = `{"query":"query { __schema { queryType { name }
 
 // GraphQLReport holds security analysis and schema intelligence of a target GraphQL instance.
 type GraphQLReport struct {
-	TargetURL           string         `json:"target_url"`
-	Endpoint            string         `json:"endpoint"`
-	IntrospectionOpen   bool           `json:"introspection_open"`
-	BatchingAllowed     bool           `json:"batching_allowed"`
-	GETQueryAllowed     bool           `json:"get_query_allowed"`
-	FieldSuggestions    bool           `json:"field_suggestions"`
-	QueriesDiscovered   []string       `json:"queries"`
-	MutationsDiscovered []string       `json:"mutations"`
-	TypesDiscovered     []string       `json:"types"`
-	Findings            []Finding      `json:"findings"`
-	Duration            time.Duration  `json:"duration"`
+	TargetURL           string              `json:"target_url"`
+	Endpoint            string              `json:"endpoint"`
+	IntrospectionOpen   bool                `json:"introspection_open"`
+	BatchingAllowed     bool                `json:"batching_allowed"`
+	GETQueryAllowed     bool                `json:"get_query_allowed"`
+	FieldSuggestions    bool                `json:"field_suggestions"`
+	QueriesDiscovered   []string            `json:"queries"`
+	MutationsDiscovered []string            `json:"mutations"`
+	TypesDiscovered     []string            `json:"types"`
+	TypeFields          map[string][]string `json:"type_fields"`
+	Findings            []Finding           `json:"findings"`
+	Duration            time.Duration       `json:"duration"`
+}
+
+func isGraphQLResponse(resp *client.Response) bool {
+	if resp == nil || resp.StatusCode >= 500 || resp.StatusCode == 404 {
+		return false
+	}
+	body := strings.TrimSpace(resp.Body)
+	if !strings.HasPrefix(body, "{") {
+		return false // Strictly reject HTML documents, SPA shells, and plain text
+	}
+	var js map[string]interface{}
+	if err := json.Unmarshal([]byte(body), &js); err != nil {
+		return false
+	}
+	if _, ok := js["data"]; ok {
+		return true
+	}
+	if errVal, ok := js["errors"]; ok {
+		if errList, isList := errVal.([]interface{}); isList && len(errList) > 0 {
+			return true
+		}
+	}
+	return false
 }
 
 // RunGraphQLAudit performs a comprehensive security assessment on target GraphQL endpoints.
@@ -89,20 +113,24 @@ func RunGraphQLAudit(baseURL string, c *client.Client) *GraphQLReport {
 
 			fullURL := rootURL + path
 			resp, err := c.Request("POST", fullURL, `{"query":"{__typename}"}`, headers)
-			if err != nil || resp == nil || resp.StatusCode >= 400 {
+			if err == nil && isGraphQLResponse(resp) {
+				mu.Lock()
+				if activeEndpoint == "" {
+					activeEndpoint = path
+				}
+				mu.Unlock()
 				return
 			}
 
-			// Verify if response is valid GraphQL JSON
-			var jsonMap map[string]interface{}
-			if err := json.Unmarshal([]byte(resp.Body), &jsonMap); err == nil {
-				if _, hasData := jsonMap["data"]; hasData || strings.Contains(resp.Body, "__typename") {
-					mu.Lock()
-					if activeEndpoint == "" {
-						activeEndpoint = path
-					}
-					mu.Unlock()
+			// Also probe with standard schema query
+			respSchema, errSchema := c.Request("POST", fullURL, `{"query":"query IntrospectProbe { __schema { types { name } } }"}`, headers)
+			if errSchema == nil && isGraphQLResponse(respSchema) {
+				mu.Lock()
+				if activeEndpoint == "" {
+					activeEndpoint = path
 				}
+				mu.Unlock()
+				return
 			}
 		}()
 	}
@@ -112,8 +140,14 @@ func RunGraphQLAudit(baseURL string, c *client.Client) *GraphQLReport {
 	if activeEndpoint == "" {
 		// Fallback check root URL directly
 		resp, _ := c.Request("POST", baseURL, `{"query":"{__typename}"}`, headers)
-		if resp != nil && (strings.Contains(resp.Body, `"data"`) || strings.Contains(resp.Body, `"errors"`)) {
+		if isGraphQLResponse(resp) {
 			activeEndpoint = u.Path
+		}
+		if activeEndpoint == "" {
+			respSchema, _ := c.Request("POST", baseURL, `{"query":"query IntrospectProbe { __schema { types { name } } }"}`, headers)
+			if isGraphQLResponse(respSchema) {
+				activeEndpoint = u.Path
+			}
 		}
 	}
 
@@ -222,9 +256,142 @@ func RunGraphQLAudit(baseURL string, c *client.Client) *GraphQLReport {
 		}
 	}
 
+	// 6. Test GraphQL IDOR and Hidden Query Disclosures
+	candidateQueries := []string{"flag", "secret", "admin", "system", "allUsers", "tokens"}
+	for _, q := range report.QueriesDiscovered {
+		if q != "me" && q != "users" {
+			found := false
+			for _, cq := range candidateQueries {
+				if cq == q {
+					found = true
+					break
+				}
+			}
+			if !found {
+				candidateQueries = append(candidateQueries, q)
+			}
+		}
+	}
+
+	for _, qName := range candidateQueries {
+		payloads := []string{
+			fmt.Sprintf(`{"query":"{ %s }"}`, qName),
+			fmt.Sprintf(`{"query":"{ %s { __typename } }"}`, qName),
+		}
+		for _, qPayload := range payloads {
+			resp, err := c.Request("POST", targetEndpointURL, qPayload, headers)
+			if err == nil && resp != nil && resp.StatusCode == 200 && strings.Contains(resp.Body, `"data"`) && !strings.Contains(resp.Body, `null`) && !strings.Contains(resp.Body, `"errors"`) {
+				flagSnippet := resp.Body
+				if len(flagSnippet) > 250 {
+					flagSnippet = flagSnippet[:250]
+				}
+				sev := SeverityHigh
+				cvss := 7.5
+				title := fmt.Sprintf("GraphQL Hidden Query Access (%s)", qName)
+				if strings.Contains(resp.Body, "flag{") || strings.Contains(resp.Body, "FLAG{") || strings.Contains(resp.Body, "CTF{") || strings.Contains(resp.Body, "IDOR{") {
+					sev = SeverityCritical
+					cvss = 9.1
+					title = fmt.Sprintf("GraphQL Sensitive Data & Flag Disclosure (%s)", qName)
+				}
+				report.Findings = append(report.Findings, Finding{
+					Module:      "graphql",
+					Title:       title,
+					Severity:    sev,
+					Confidence:  100,
+					URL:         targetEndpointURL,
+					Payload:     qPayload,
+					Detail:      fmt.Sprintf("Successfully queried unpublished/hidden GraphQL field '%s' disclosing backend data.", qName),
+					Evidence:    flagSnippet,
+					Remediation: "Ensure field-level authorization checks are enforced on all queries and types in the GraphQL schema.",
+					CWEID:       200,
+					CVSS:        cvss,
+				})
+				break
+			}
+		}
+	}
+
+	// Check IDOR on user / object queries: e.g. user(id: 1) vs user(id: 2)
+	userFields := "id username email"
+	if uFields, ok := report.TypeFields["User"]; ok && len(uFields) > 0 {
+		userFields = strings.Join(uFields, " ")
+	}
+	idorQueries := []string{
+		fmt.Sprintf(`{"query":"{ user(id: 1) { %s } }"}`, userFields),
+		fmt.Sprintf(`{"query":"{ user(id: 2) { %s } }"}`, userFields),
+		`{"query":"{ user(id: 1) { id username email role flag } }"}`,
+		`{"query":"{ user(id: 2) { id username email role flag } }"}`,
+		`{"query":"{ user(id: 1) { id username } }"}`,
+		`{"query":"{ user(id: 2) { id username } }"}`,
+		`{"query":"{ user(id: 1) { id name } }"}`,
+		`{"query":"{ user(id: 2) { id name } }"}`,
+		`{"query":"{ user(id: 1) { id } }"}`,
+		`{"query":"{ user(id: 2) { id } }"}`,
+		`{"query":"{ user(id: 1) { __typename } }"}`,
+		`{"query":"{ user(id: 2) { __typename } }"}`,
+		`{"query":"{ user(id: "1") { id username email } }"}`,
+		`{"query":"{ user(id: "2") { id username email } }"}`,
+		`{"query":"{ users(id: 1) { id name email } }"}`,
+		`{"query":"{ users(id: 2) { id name email } }"}`,
+	}
+	for _, qPayload := range idorQueries {
+		resp, err := c.Request("POST", targetEndpointURL, qPayload, headers)
+		if err == nil && resp != nil && resp.StatusCode == 200 && strings.Contains(resp.Body, `"data"`) && !strings.Contains(resp.Body, `null`) && !strings.Contains(resp.Body, `"errors"`) {
+			evidenceSnippet := resp.Body
+			if len(evidenceSnippet) > 250 {
+				evidenceSnippet = evidenceSnippet[:250]
+			}
+			cvss := 8.5
+			if strings.Contains(resp.Body, "flag{") || strings.Contains(resp.Body, "FLAG{") || strings.Contains(resp.Body, "CTF{") || strings.Contains(resp.Body, "IDOR{") {
+				cvss = 9.1
+			}
+			report.Findings = append(report.Findings, Finding{
+				Module:      "graphql",
+				Title:       "GraphQL Object Level Authorization Bypass (IDOR / BOLA)",
+				Severity:    SeverityCritical,
+				Confidence:  95,
+				URL:         targetEndpointURL,
+				Payload:     qPayload,
+				Detail:      "Disclosed user record across arbitrary identifier via GraphQL object query without access control verification.",
+				Evidence:    evidenceSnippet,
+				Remediation: "Enforce object-level authorization within GraphQL resolvers verifying current context identity against requested record ID.",
+				CWEID:       639,
+				CVSS:        cvss,
+			})
+			break
+		}
+	}
+
 	_ = initialSchemaData
 	report.Duration = time.Since(start)
 	return report
+}
+
+// GraphQLModule implements the standard modules.Module interface for full scan integration.
+type GraphQLModule struct{}
+
+func NewGraphQLModule() *GraphQLModule {
+	return &GraphQLModule{}
+}
+
+func (m *GraphQLModule) Name() string {
+	return "graphql"
+}
+
+func (m *GraphQLModule) Description() string {
+	return "GraphQL Introspection, Query Batching, and Schema Intelligence Auditor"
+}
+
+func (m *GraphQLModule) Run(target *Target, c *client.Client) ([]*Finding, error) {
+	rep := RunGraphQLAudit(target.URL, c)
+	if rep.Endpoint == "" {
+		return nil, fmt.Errorf("no active GraphQL endpoint reachable on %s (host offline or connection refused)", target.URL)
+	}
+	var findings []*Finding
+	for i := range rep.Findings {
+		findings = append(findings, &rep.Findings[i])
+	}
+	return findings, nil
 }
 
 // parseSchema extracts queries, mutations, and types from the introspection result.
@@ -271,11 +438,17 @@ func parseSchema(rep *GraphQLReport, schema map[string]interface{}) {
 				continue
 			}
 			fName, _ := fMap["name"].(string)
+			if fName != "" {
+				if rep.TypeFields == nil {
+					rep.TypeFields = make(map[string][]string)
+				}
+				rep.TypeFields[tName] = append(rep.TypeFields[tName], fName)
 
-			if tName == queryTypeName {
-				rep.QueriesDiscovered = append(rep.QueriesDiscovered, fName)
-			} else if tName == mutationTypeName {
-				rep.MutationsDiscovered = append(rep.MutationsDiscovered, fName)
+				if tName == queryTypeName {
+					rep.QueriesDiscovered = append(rep.QueriesDiscovered, fName)
+				} else if tName == mutationTypeName {
+					rep.MutationsDiscovered = append(rep.MutationsDiscovered, fName)
+				}
 			}
 		}
 	}

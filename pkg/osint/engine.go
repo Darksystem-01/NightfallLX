@@ -85,10 +85,17 @@ func RunOSINT(cfg Config) (*OSINTReport, error) {
 		finalReport.CloudProvider = dnsRep.CloudProvider
 		finalReport.NameServers = dnsRep.NameServers
 		finalReport.MailServers = dnsRep.MailServers
+		finalReport.SOARecord = dnsRep.SOARecord
+		finalReport.TXTRecords = dnsRep.TXTRecords
 		finalReport.SPFRecord = dnsRep.SPFRecord
 		finalReport.DMARCRecord = dnsRep.DMARCRecord
 		finalReport.DMARCStatus = dnsRep.DMARCStatus
 		finalReport.Findings = append(finalReport.Findings, dnsRep.Findings...)
+
+		if finalReport.SOARecord != nil && finalReport.SOARecord.AdminEmail != "" {
+			adminEmail := finalReport.SOARecord.AdminEmail
+			finalReport.Emails = append([]string{adminEmail + " (SOA Hostmaster)"}, finalReport.Emails...)
+		}
 
 		// Task 1b: Passive Team Cymru ASN & BGP Network Range Discovery
 		if cfg.CheckASN && len(dnsRep.TargetIPs) > 0 {
@@ -195,6 +202,77 @@ func RunOSINT(cfg Config) (*OSINTReport, error) {
 		finalReport.EmailPattern = dossier.Pattern
 	}
 
+	// Task 8: Automated DNS Enumeration Intelligence (dnsenum)
+	if cfg.CheckDNSEnum {
+		dnsRes, err := RunDNSEnum(DNSEnumConfig{
+			Domain:     cleanDomain,
+			Wordlist:   cfg.DNSEnumWordlist,
+			Threads:    15,
+			TimeoutSec: 5,
+			NoReverse:  true,
+		})
+		if err == nil && dnsRes != nil {
+			finalReport.DNSEnum = dnsRes
+			if finalReport.SOARecord == nil {
+				finalReport.SOARecord = dnsRes.SOARecord
+			}
+			if len(finalReport.TXTRecords) == 0 {
+				finalReport.TXTRecords = dnsRes.TXTRecords
+			}
+			if len(finalReport.MailServers) == 0 && len(dnsRes.MailServers) > 0 {
+				for _, mx := range dnsRes.MailServers {
+					valStr := ""
+					if mx.Value != "" {
+						valStr = " -> " + mx.Value
+					}
+					finalReport.MailServers = append(finalReport.MailServers, fmt.Sprintf("%s [%s]%s", mx.Host, mx.Type, valStr))
+				}
+			}
+			if dnsRes.SOARecord != nil && dnsRes.SOARecord.AdminEmail != "" {
+				adminEmail := dnsRes.SOARecord.AdminEmail
+				found := false
+				for _, e := range finalReport.Emails {
+					if strings.Contains(e, adminEmail) {
+						found = true
+						break
+					}
+				}
+				if !found {
+					finalReport.Emails = append([]string{adminEmail + " (SOA Hostmaster)"}, finalReport.Emails...)
+				}
+			}
+			for _, s := range dnsRes.Subdomains {
+				alreadyExists := false
+				for _, existing := range finalReport.Subdomains {
+					if strings.EqualFold(existing.Hostname, s.Host) {
+						alreadyExists = true
+						break
+					}
+				}
+				if !alreadyExists {
+					finalReport.Subdomains = append(finalReport.Subdomains, SubdomainResult{
+						Hostname: s.Host,
+						Source:   "dnsenum",
+						IPs:      []string{s.Value},
+					})
+				}
+			}
+			for _, netr := range dnsRes.ClassCNetranges {
+				found := false
+				for _, c := range finalReport.CIDRRanges {
+					if c == netr {
+						found = true
+						break
+					}
+				}
+				if !found {
+					finalReport.CIDRRanges = append(finalReport.CIDRRanges, netr)
+				}
+			}
+		}
+	}
+
+
 	return finalReport, nil
 }
 
@@ -250,10 +328,42 @@ func PrintOSINTReport(rep *OSINTReport) {
 	if len(rep.AXFRResults) > 0 {
 		fmt.Printf("    ├── \033[1;31mDNS Zone (AXFR) : [VULNERABLE - %d records leaked!]\033[0m\n", len(rep.AXFRResults))
 	}
+	if rep.SOARecord != nil {
+		fmt.Printf("    ├── Primary SOA NS  : \033[1;37m%s\033[0m\n", rep.SOARecord.PrimaryNS)
+		if rep.SOARecord.AdminEmail != "" {
+			fmt.Printf("    ├── \033[1;33mSOA Hostmaster  : \033[1;32m%s\033[0m (Extracted from SOA)\n", rep.SOARecord.AdminEmail)
+		}
+	}
 	if len(rep.MailServers) > 0 {
 		fmt.Printf("    └── Mail Servers    : %s\n", strings.Join(rep.MailServers, ", "))
 	}
 	fmt.Println()
+
+	// 1b. Automated DNS Enumeration Intelligence
+	if rep.DNSEnum != nil {
+		fmt.Printf("\033[1;36m[+] DNS Enumeration Intelligence (%s):\033[0m\n", rep.DNSEnum.EngineUsed)
+		if len(rep.DNSEnum.HostAddresses) > 0 {
+			fmt.Printf("    ├── Host A/AAAA Records : %d resolved\n", len(rep.DNSEnum.HostAddresses))
+		}
+		if len(rep.DNSEnum.NameServers) > 0 {
+			fmt.Printf("    ├── Nameservers Probed  : %d servers\n", len(rep.DNSEnum.NameServers))
+		}
+		if len(rep.DNSEnum.ZoneTransfers) > 0 {
+			for _, z := range rep.DNSEnum.ZoneTransfers {
+				if z.Vulnerable {
+					fmt.Printf("    ├── \033[1;31m[🔥 AXFR VULNERABLE]\033[0m %s -> Leaked %d zone records!\n", z.Server, len(z.Records))
+				}
+			}
+		}
+		if len(rep.DNSEnum.ClassCNetranges) > 0 {
+			fmt.Printf("    ├── Class C Netranges   : %s\n", strings.Join(rep.DNSEnum.ClassCNetranges, ", "))
+		}
+		if len(rep.DNSEnum.Subdomains) > 0 {
+			fmt.Printf("    └── Subdomains Bruted   : %d valid subdomains discovered\n", len(rep.DNSEnum.Subdomains))
+		}
+		fmt.Println()
+	}
+
 
 	// 2. Email Spoofing & Security Posture
 	fmt.Println("\033[1;36m[+] Email Security Posture (SPF & DMARC):\033[0m")
@@ -273,6 +383,34 @@ func PrintOSINTReport(rep *OSINTReport) {
 		dmarcDisplay = fmt.Sprintf("\033[1;32m[SECURE (enforced)] %s\033[0m", rep.DMARCRecord)
 	}
 	fmt.Printf("    └── DMARC Policy    : %s\n\n", dmarcDisplay)
+
+	// 2b. Authoritative TXT Records
+	if len(rep.TXTRecords) > 0 {
+		fmt.Printf("\033[1;36m[+] Authoritative TXT Records (%d records identified):\033[0m\n", len(rep.TXTRecords))
+		for i, txt := range rep.TXTRecords {
+			typeLabel := "Verification / Token"
+			color := "\033[36m"
+			lower := strings.ToLower(txt)
+			if strings.HasPrefix(lower, "v=spf1") {
+				typeLabel = "SPF Policy"
+				color = "\033[32m"
+			} else if strings.HasPrefix(lower, "v=dmarc1") {
+				typeLabel = "DMARC Policy"
+				color = "\033[35m"
+			} else if strings.Contains(lower, "google-site-verification") {
+				typeLabel = "Google Workspace"
+				color = "\033[34m"
+			} else if strings.Contains(lower, "ms=") {
+				typeLabel = "Microsoft 365"
+				color = "\033[34m"
+			} else if strings.Contains(lower, "anthropic") {
+				typeLabel = "Anthropic Claude"
+				color = "\033[35m"
+			}
+			fmt.Printf("    ├── [%d] %s[%-18s]\033[0m %s\n", i+1, color, typeLabel, txt)
+		}
+		fmt.Println()
+	}
 
 	// 3. Subdomains Discovered
 	fmt.Printf("\033[1;36m[+] Certificate Transparency Subdomains (%d discovered):\033[0m\n", len(rep.Subdomains))
@@ -398,7 +536,7 @@ func PrintOSINTReport(rep *OSINTReport) {
 			d := rep.GoogleDorks[i]
 			fmt.Printf("    ├── \033[1;37m%-35s\033[0m [\033[36m%s\033[0m]\n", d.Description, d.GHDBSection)
 			fmt.Printf("    │   ├── Query: \033[33m%s\033[0m\n", d.Query)
-			fmt.Printf("    │   └── Links: \033[34m[Google]\033[0m %s | \033[32m[DorkSearch]\033[0m %s\n", d.GoogleURL, d.DorkSearchURL)
+			fmt.Printf("    │   └── Links: \033[34m[Google]\033[0m %s | \033[32m[DuckDuckGo]\033[0m %s\n", d.GoogleURL, d.DuckDuckGoURL)
 		}
 		if len(rep.GoogleDorks) > limit {
 			fmt.Printf("    └── ... and \033[1m%d\033[0m more specialized GHDB dorks (run with \033[1m-dorks\033[0m for full dossier & HTML dashboard).\n", len(rep.GoogleDorks)-limit)

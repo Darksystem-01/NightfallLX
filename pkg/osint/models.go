@@ -63,6 +63,8 @@ type OSINTReport struct {
 	CIDRRanges         []string          `json:"cidr_ranges,omitempty"`
 	NameServers        []string          `json:"name_servers"`
 	MailServers        []string          `json:"mail_servers"`
+	SOARecord          *SOARecord        `json:"soa_record,omitempty"`
+	TXTRecords         []string          `json:"txt_records,omitempty"`
 	SPFRecord          string            `json:"spf_record"`
 	DMARCRecord        string            `json:"dmarc_record"`
 	DMARCStatus        DMARCSeverity     `json:"dmarc_status"`
@@ -75,6 +77,7 @@ type OSINTReport struct {
 	AXFRResults        []string          `json:"axfr_results,omitempty"`
 	Emails             []string          `json:"emails,omitempty"`
 	EmailPattern       string            `json:"email_pattern,omitempty"`
+	DNSEnum            *DNSEnumResult    `json:"dnsenum,omitempty"`
 	Duration           time.Duration     `json:"duration"`
 }
 
@@ -88,6 +91,8 @@ type Config struct {
 	CheckAdmin    bool
 	CheckAXFR     bool
 	CheckEmails   bool
-	CheckASN      bool
+	CheckASN        bool
+	CheckDNSEnum    bool
+	DNSEnumWordlist string
 }
 

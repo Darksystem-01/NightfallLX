@@ -32,33 +32,52 @@ func (m *NoSQLiModule) Run(target *Target, c *client.Client) ([]*Finding, error)
 		if isPost {
 			origVal = target.Data[param]
 		}
-
-		// 1. Error-based probe: inject malformed operator
-		malformedPayload := `{"$where": "this"}`
-		var errResp *client.Response
-		var err error
-		if isPost {
-			errResp, err = c.Request("POST", target.URL, target.BuildDataWithParam(param, malformedPayload), nil)
-		} else {
-			errResp, err = c.Request("GET", target.BuildURLWithParam(param, malformedPayload), "", nil)
+		if origVal == "" {
+			origVal = "1"
 		}
 
-		if err == nil && errResp != nil && mongoErrorRegex.MatchString(errResp.Body) {
-			evidence := mongoErrorRegex.FindString(errResp.Body)
-			findings = append(findings, &Finding{
-				Module:      m.Name(),
-				Title:       "Error-Based NoSQL (MongoDB) Injection",
-				Severity:    SeverityHigh,
-				Confidence:  100,
-				URL:         target.URL,
-				Parameter:   param,
-				Payload:     malformedPayload,
-				Detail:      fmt.Sprintf("Disclosed database engine error via injected NoSQL operator: '%s'", evidence),
-				Evidence:    evidence,
-				Remediation: "Sanitize user input and prevent passing raw objects into NoSQL query constructors.",
-				CWEID:       943,
-			})
+		// Fetch baseline
+		var baseResp *client.Response
+		if isPost {
+			baseResp, _ = c.Request("POST", target.URL, target.BuildDataWithParam(param, origVal), nil)
+		} else {
+			baseResp, _ = c.Request("GET", target.BuildURLWithParam(param, origVal), "", nil)
+		}
+		if baseResp == nil || baseResp.StatusCode != 200 {
 			continue
+		}
+
+		// Ensure baseline does not already disclose Mongo errors
+		baselineHasMongoError := mongoErrorRegex.MatchString(baseResp.Body)
+
+		// 1. Error-based probe: inject malformed operator
+		if !baselineHasMongoError {
+			malformedPayload := `{"$where": "this"}`
+			var errResp *client.Response
+			var err error
+			if isPost {
+				errResp, err = c.Request("POST", target.URL, target.BuildDataWithParam(param, malformedPayload), nil)
+			} else {
+				errResp, err = c.Request("GET", target.BuildURLWithParam(param, malformedPayload), "", nil)
+			}
+
+			if err == nil && errResp != nil && mongoErrorRegex.MatchString(errResp.Body) {
+				evidence := mongoErrorRegex.FindString(errResp.Body)
+				findings = append(findings, &Finding{
+					Module:      m.Name(),
+					Title:       "Error-Based NoSQL (MongoDB) Injection",
+					Severity:    SeverityHigh,
+					Confidence:  100,
+					URL:         target.URL,
+					Parameter:   param,
+					Payload:     malformedPayload,
+					Detail:      fmt.Sprintf("Disclosed database engine error via injected NoSQL operator: '%s'", evidence),
+					Evidence:    evidence,
+					Remediation: "Sanitize user input and prevent passing raw objects into NoSQL query constructors.",
+					CWEID:       943,
+				})
+				continue
+			}
 		}
 
 		// 2. Differential probe: True vs False condition ($ne vs $eq)
@@ -76,7 +95,9 @@ func (m *NoSQLiModule) Run(target *Target, c *client.Client) ([]*Finding, error)
 
 		if trueResp != nil && falseResp != nil {
 			// If True condition succeeds (e.g. 200 OK with data) while False condition fails (e.g. 401/404 or empty)
-			if trueResp.StatusCode == 200 && (falseResp.StatusCode != 200 || Similarity(trueResp.Body, falseResp.Body) < 0.60) {
+			simTrue := Similarity(baseResp.Body, trueResp.Body)
+			simFalse := Similarity(baseResp.Body, falseResp.Body)
+			if trueResp.StatusCode == 200 && simTrue >= 0.85 && (falseResp.StatusCode != 200 || simFalse < 0.65) {
 				findings = append(findings, &Finding{
 					Module:      m.Name(),
 					Title:       "Differential Boolean NoSQL (MongoDB) Injection",
@@ -90,8 +111,6 @@ func (m *NoSQLiModule) Run(target *Target, c *client.Client) ([]*Finding, error)
 					Remediation: "Ensure input parameters are strictly validated as primitive strings rather than objects or query selector hashes.",
 					CWEID:       943,
 				})
-			} else if origVal != "" {
-				_ = origVal
 			}
 		}
 	}

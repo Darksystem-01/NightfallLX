@@ -236,6 +236,16 @@ func (c *Client) doSingleRequest(method, reqURL, data string, customHeaders map[
 		}
 	}
 
+	// Ensure POST/PUT request bodies have appropriate Content-Type header so web frameworks parse fields
+	if req.Header.Get("Content-Type") == "" && data != "" {
+		trimmed := strings.TrimSpace(data)
+		if strings.HasPrefix(trimmed, "{") || strings.HasPrefix(trimmed, "[") {
+			req.Header.Set("Content-Type", "application/json")
+		} else {
+			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		}
+	}
+
 	if c.HeaderTampering {
 		ApplyBypassHeaders(req)
 	}
@@ -364,4 +374,40 @@ func (c *Client) RawRequest(targetURL string, rawPayload []byte) (*Response, err
 		Headers:    make(http.Header),
 		Proto:      "RAW",
 	}, nil
+}
+
+// ResolveRedirect follows HTTP redirects (up to maxHops) and returns the final destination URL.
+func (c *Client) ResolveRedirect(startURL string, maxHops int) (string, error) {
+	current := startURL
+	for hop := 0; hop < maxHops; hop++ {
+		resp, err := c.Request("GET", current, "", nil)
+		if err != nil || resp == nil {
+			break
+		}
+		if resp.StatusCode >= 300 && resp.StatusCode < 400 {
+			loc := resp.Location
+			if loc == "" {
+				loc = resp.Headers.Get("Location")
+			}
+			if loc == "" {
+				break
+			}
+			parsedLoc, err := url.Parse(loc)
+			if err != nil {
+				break
+			}
+			parsedCurrent, err := url.Parse(current)
+			if err != nil {
+				break
+			}
+			resolved := parsedCurrent.ResolveReference(parsedLoc).String()
+			if resolved == current {
+				break
+			}
+			current = resolved
+			continue
+		}
+		break
+	}
+	return current, nil
 }

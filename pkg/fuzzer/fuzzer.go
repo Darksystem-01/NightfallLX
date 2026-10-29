@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/url"
 	"nightfalllx/pkg/client"
+	"nightfalllx/pkg/wordlists"
 	"os"
 	"regexp"
 	"strings"
@@ -238,7 +239,15 @@ func (f *Fuzzer) loadWords() ([]string, error) {
 	}
 
 	if f.cfg.IsSubdomain {
+		embedded := wordlists.GetWordlist("subdomains", "")
+		if len(embedded) > 0 {
+			return embedded, nil
+		}
 		return DefaultSubdomainWordlist, nil
+	}
+	embedded := wordlists.GetWordlist("directories", "")
+	if len(embedded) > 0 {
+		return embedded, nil
 	}
 	return DefaultLabWordlist, nil
 }

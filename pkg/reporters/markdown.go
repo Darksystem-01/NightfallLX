@@ -25,17 +25,23 @@ func WriteMarkdownReport(target *modules.Target, findings []*modules.Finding, fi
 	fmt.Fprintf(f, "- **Scan Date:** %s\n", now)
 	fmt.Fprintf(f, "- **Total Confirmed Findings:** %d\n\n", len(findings))
 	fmt.Fprintf(f, "---\n\n## Findings Summary\n\n")
-	fmt.Fprintf(f, "| Module | Title | Severity | Confidence | Parameter |\n")
-	fmt.Fprintf(f, "|---|---|---|---|---|\n")
+	fmt.Fprintf(f, "| Module | Title | Severity | CVSS 3.1 | Confidence | Parameter |\n")
+	fmt.Fprintf(f, "|---|---|---|---|---|---|\n")
 
 	if len(findings) == 0 {
-		fmt.Fprintf(f, "| - | *No confirmed vulnerabilities detected* | - | - | - |\n")
+		fmt.Fprintf(f, "| - | *No confirmed vulnerabilities detected* | - | - | - | - |\n")
 	} else {
 		for _, item := range findings {
-			fmt.Fprintf(f, "| `%s` | %s | **%s** | %d%% | `%s` |\n",
+			item.NormalizeCVSS()
+			cvssDisplay := fmt.Sprintf("%.1f", item.CVSS)
+			if item.CVSS == 0.0 {
+				cvssDisplay = "-"
+			}
+			fmt.Fprintf(f, "| `%s` | %s | **%s** | %s | %d%% | `%s` |\n",
 				escapeMarkdownPipe(item.Module),
 				escapeMarkdownPipe(item.Title),
 				escapeMarkdownPipe(string(item.Severity)),
+				cvssDisplay,
 				item.Confidence,
 				escapeMarkdownPipe(item.Parameter))
 		}
@@ -44,10 +50,14 @@ func WriteMarkdownReport(target *modules.Target, findings []*modules.Finding, fi
 	fmt.Fprintf(f, "\n---\n\n## Detailed Vulnerability Analysis\n\n")
 
 	for idx, item := range findings {
-		curlCmd := buildCurl(target, item.Parameter, item.Payload)
+		curlCmd := buildCurlFinding(target, item)
 		fmt.Fprintf(f, "### %d. %s\n\n", idx+1, item.Title)
 		fmt.Fprintf(f, "- **Module:** `%s`\n", item.Module)
+		item.NormalizeCVSS()
 		fmt.Fprintf(f, "- **Severity:** **%s**\n", item.Severity)
+		if item.CVSS > 0 || item.CVSSVector != "" {
+			fmt.Fprintf(f, "- **CVSS v3.1:** `%.1f` — `%s`\n", item.CVSS, item.CVSSVector)
+		}
 		fmt.Fprintf(f, "- **Confidence:** %d%%\n", item.Confidence)
 		if item.CWEID > 0 {
 			fmt.Fprintf(f, "- **CWE ID:** [CWE-%d](https://cwe.mitre.org/data/definitions/%d.html)\n", item.CWEID, item.CWEID)
@@ -68,25 +78,79 @@ func escapeMarkdownPipe(s string) string {
 
 // WriteJSONReport lives in json.go and emits the structured report model.
 
-func buildCurl(target *modules.Target, param, payload string) string {
-	if target.Method == "POST" {
-		vals := url.Values{}
-		for k, v := range target.Data {
-			vals.Set(k, v)
-		}
-		vals.Set(param, payload)
-		return fmt.Sprintf("curl -s -k -X POST --data '%s' '%s'", vals.Encode(), target.URL)
+func buildCurlFinding(target *modules.Target, f *modules.Finding) string {
+	if f == nil && target == nil {
+		return ""
 	}
 
-	u, err := url.Parse(target.URL)
-	if err != nil {
-		return fmt.Sprintf("curl -s -k '%s'", target.URL)
+	reqURL := ""
+	if f != nil && f.URL != "" {
+		reqURL = f.URL
+	} else if target != nil && target.URL != "" {
+		reqURL = target.URL
 	}
-	q := u.Query()
-	for k, v := range target.Params {
-		q.Set(k, v)
+
+	param := ""
+	payload := ""
+	module := ""
+	if f != nil {
+		param = f.Parameter
+		payload = f.Payload
+		module = f.Module
 	}
-	q.Set(param, payload)
-	u.RawQuery = q.Encode()
-	return fmt.Sprintf("curl -s -k '%s'", u.String())
+
+	trimmedPayload := strings.TrimSpace(payload)
+	isJSONPayload := strings.HasPrefix(trimmedPayload, "{") || strings.HasPrefix(trimmedPayload, "[")
+
+	// Case 1: GraphQL / JSON requests
+	if module == "graphql" || isJSONPayload {
+		// If it's a GET GraphQL probe (e.g. ?query=...)
+		if strings.Contains(reqURL, "?query=") || (f != nil && strings.Contains(strings.ToLower(f.Title), "get method")) {
+			return fmt.Sprintf("curl -s -k '%s'", reqURL)
+		}
+		if trimmedPayload != "" {
+			safePayload := strings.ReplaceAll(payload, "'", "'\\''")
+			return fmt.Sprintf("curl -s -k -X POST -H 'Content-Type: application/json' --data-raw '%s' '%s'", safePayload, reqURL)
+		}
+	}
+
+	// Case 2: Target or Finding is explicitly POST / PUT
+	targetMethod := "GET"
+	if target != nil && target.Method != "" {
+		targetMethod = strings.ToUpper(target.Method)
+	}
+
+	if targetMethod == "POST" || targetMethod == "PUT" || targetMethod == "PATCH" {
+		if isJSONPayload {
+			safePayload := strings.ReplaceAll(payload, "'", "'\\''")
+			return fmt.Sprintf("curl -s -k -X %s -H 'Content-Type: application/json' --data-raw '%s' '%s'", targetMethod, safePayload, reqURL)
+		}
+
+		vals := url.Values{}
+		if target != nil {
+			for k, v := range target.Data {
+				vals.Set(k, v)
+			}
+		}
+		if param != "" {
+			vals.Set(param, payload)
+		}
+		encoded := vals.Encode()
+		if encoded != "" {
+			return fmt.Sprintf("curl -s -k -X %s --data '%s' '%s'", targetMethod, encoded, reqURL)
+		}
+		return fmt.Sprintf("curl -s -k -X %s '%s'", targetMethod, reqURL)
+	}
+
+	// Case 3: GET with parameter swapped
+	if target != nil && param != "" {
+		swappedURL := target.BuildURLWithParam(param, payload)
+		return fmt.Sprintf("curl -s -k '%s'", swappedURL)
+	}
+
+	return fmt.Sprintf("curl -s -k '%s'", reqURL)
+}
+
+func buildCurl(target *modules.Target, param, payload string) string {
+	return buildCurlFinding(target, &modules.Finding{Parameter: param, Payload: payload})
 }

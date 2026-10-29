@@ -64,7 +64,9 @@ func (m *UploadModule) Run(target *Target, c *client.Client) ([]*Finding, error)
 
 	uploadResp, err := c.Request("POST", target.URL, b.String(), uploadHeaders)
 	if err == nil && uploadResp != nil {
-		if (uploadResp.StatusCode == 200 || uploadResp.StatusCode == 201) && uploadSuccessRegex.MatchString(uploadResp.Body) {
+		if (uploadResp.StatusCode == 200 || uploadResp.StatusCode == 201) &&
+			uploadSuccessRegex.MatchString(uploadResp.Body) &&
+			!uploadSuccessRegex.MatchString(resp.Body) {
 			evidence := uploadSuccessRegex.FindString(uploadResp.Body)
 			findings = append(findings, &Finding{
 				Module:      m.Name(),

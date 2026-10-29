@@ -47,7 +47,17 @@ func (m *HeadersModule) Run(target *Target, c *client.Client) ([]*Finding, error
 		{"Referrer-Policy", 116, SeverityLow, "Missing Referrer-Policy Header", "Set 'Referrer-Policy: strict-origin-when-cross-origin' or 'no-referrer' to avoid leaking referrer information."},
 	}
 
+	cType := strings.ToLower(headers.Get("Content-Type"))
+	isHTMLDoc := strings.Contains(cType, "text/html") || (resp.StatusCode == 200 && !strings.Contains(cType, "application/json"))
+
 	for _, mh := range missingHeaders {
+		// Eliminate False Positives: X-Frame-Options & CSP only apply to HTML web documents, never API JSON responses
+		if !isHTMLDoc && (mh.Header == "X-Frame-Options" || mh.Header == "Content-Security-Policy") {
+			continue
+		}
+		if resp.StatusCode >= 300 && resp.StatusCode < 400 {
+			continue // Skip redirect intermediate responses
+		}
 		if headers.Get(mh.Header) == "" {
 			findings = append(findings, &Finding{
 				Module:      m.Name(),
@@ -106,6 +116,11 @@ func (m *HeadersModule) Run(target *Target, c *client.Client) ([]*Finding, error
 	// 3. Cookie Flags (Secure, HttpOnly, SameSite)
 	for _, cookie := range headers.Values("Set-Cookie") {
 		lowerCookie := strings.ToLower(cookie)
+		cookieName := strings.TrimSpace(strings.Split(cookie, "=")[0])
+		lowerName := strings.ToLower(cookieName)
+		if isNonSensitiveCookie(lowerName) {
+			continue
+		}
 		var missingFlags []string
 		if !strings.Contains(lowerCookie, "httponly") {
 			missingFlags = append(missingFlags, "HttpOnly")
@@ -136,4 +151,18 @@ func (m *HeadersModule) Run(target *Target, c *client.Client) ([]*Finding, error
 	}
 
 	return findings, nil
+}
+
+func isNonSensitiveCookie(name string) bool {
+	nonSensitiveList := []string{
+		"next_locale", "locale", "lang", "language", "theme", "mode", "darkmode", "lightmode",
+		"timezone", "tz", "_ga", "_gid", "_gat", "_ym_", "cookieconsent", "consent",
+		"cf_clearance", "__cf_bm", "csrftoken", "_csrf", "xsrf-token", "cart_count",
+	}
+	for _, ns := range nonSensitiveList {
+		if strings.Contains(name, ns) {
+			return true
+		}
+	}
+	return false
 }
