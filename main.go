@@ -187,6 +187,7 @@ func main() {
 		isAuto         bool
 		isWeb          bool
 		webPort        int
+		webHost        string
 		matchRegexStr  string
 		filterRegexStr string
 		autoRegex      bool
@@ -298,6 +299,7 @@ func main() {
 	flag.BoolVar(&isWeb, "web", false, "Launch persistent Web Command Center & Generator dashboard (default: http://127.0.0.1:8888)")
 	flag.BoolVar(&isWeb, "gui", false, "Alias for --web")
 	flag.IntVar(&webPort, "web-port", 8888, "Port for Web Command Center dashboard (default: 8888)")
+	flag.StringVar(&webHost, "web-host", "127.0.0.1", "Host address to bind Web Command Center (e.g. 127.0.0.1 or 0.0.0.0 for LAN/public share)")
 	flag.BoolVar(&isAuto, "full", false, "Alias for -auto")
 
 	// HTTP Options
@@ -527,7 +529,7 @@ CVSS v3.1 SCORING ENGINE:
 
 	// Web Command Center & Generator Dashboard
 	if isWeb {
-		if err := webgui.StartServer("127.0.0.1", webPort); err != nil {
+		if err := webgui.StartServer(webHost, webPort); err != nil {
 			fmt.Printf("\033[31m[!] Web server error: %v\033[0m\n", err)
 			os.Exit(1)
 		}
